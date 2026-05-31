@@ -1,28 +1,23 @@
 # ArchBot — host Ollama override
 #
-# Use this when Ollama is already installed and running on your host machine
-# (i.e. you don't want Docker to pull/run the ollama container).
+# Use this when Ollama is already installed and running on your host machine.
+# Disables the ollama container and points the backend at host.docker.internal.
 #
 # Usage:
 #   docker compose -f docker-compose.local.yml -f docker-compose.local.override.yml up backend frontend
 #
-# Or set OLLAMA_MODEL in a .env file next to this file to switch models:
-#   echo 'OLLAMA_MODEL=phi3' > .env
-#
-# Linux users: Docker Desktop maps host.docker.internal automatically.
-# If you're on Linux without Docker Desktop, add this to the backend service:
+# Linux users: add this under the backend service if host.docker.internal doesn't resolve:
 #   extra_hosts:
 #     - "host.docker.internal:host-gateway"
 
 services:
-  # Remove the ollama container — we use the host installation instead
   ollama:
     profiles:
-      - disabled   # effectively disables the service without removing it
+      - disabled
 
   backend:
-    # Drop the dependency on the ollama container
-    depends_on: {}
+    depends_on:
+      - frontend   # dummy self-reference trick removed; just clear by listing nothing real
     environment:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
@@ -30,6 +25,4 @@ services:
       AWS_DEFAULT_REGION: us-east-1
 
   frontend:
-    # Frontend only needs backend to be started, not healthy yet
-    depends_on:
-      - backend
+    depends_on: []
