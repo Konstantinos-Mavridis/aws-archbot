@@ -17,6 +17,8 @@ import logging
 import os
 
 import boto3
+from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.models import (
@@ -35,6 +37,8 @@ _MODEL_ID = os.environ.get(
 _KB_ID = os.environ.get("KNOWLEDGE_BASE_ID")  # Option A
 _OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT")  # Option B
 _VECTOR_INDEX = os.environ.get("VECTOR_INDEX_NAME", "archbot-wa-index")
+_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
+_VECTOR_DIM = 1024
 _TOP_K = int(os.environ.get("RAG_TOP_K", "20"))
 
 # Lens-specific system prompt addenda
@@ -82,7 +86,7 @@ class RagPipeline:
     # ------------------------------------------------------------------
 
     async def run(self, request: ArchitectureRequest) -> ArchitectureResponse:
-        """Execute the full RAG → generation pipeline."""
+        """Execute the full RAG -> generation pipeline."""
         context_chunks = await self._retrieve(request)
         raw_json = await self._generate(request, context_chunks)
         return ArchitectureResponse.model_validate_json(raw_json)
@@ -102,7 +106,6 @@ class RagPipeline:
         return []
 
     def _build_query(self, request: ArchitectureRequest) -> str:
-        """Compose a retrieval query incorporating workload text + NFRs."""
         parts = [request.workload_description]
         nfr = request.non_functionals
         if nfr.sla_percent:
@@ -114,13 +117,10 @@ class RagPipeline:
         return " ".join(parts)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-    def _retrieve_from_knowledge_base(
-        self, query: str, lens: Lens
-    ) -> list[dict]:
-        """Option A: Bedrock Knowledge Base retrieve API."""
+    def _retrieve_from_knowledge_base(self, query: str, lens: Lens) -> list[dict]:
+        """Option A: Bedrock Knowledge Base Retrieve API with metadata filter."""
         filter_expr: dict = {"equals": {"key": "lens", "value": lens.value}}
         if lens != Lens.GENERAL:
-            # Include general docs alongside lens-specific docs
             filter_expr = {
                 "orAll": [
                     {"equals": {"key": "lens", "value": "general"}},
@@ -147,45 +147,98 @@ class RagPipeline:
             for r in response.get("retrievalResults", [])
         ]
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     def _retrieve_from_opensearch(self, query: str, lens: Lens) -> list[dict]:
-        """Option B: OpenSearch Serverless k-NN query (placeholder).
+        """Option B: OpenSearch Serverless k-NN query with lens metadata filter."""
+        # Embed the query
+        embed_body = json.dumps({"inputText": query})
+        embed_resp = self._bedrock_runtime.invoke_model(
+            modelId=_EMBEDDING_MODEL,
+            contentType="application/json",
+            accept="application/json",
+            body=embed_body,
+        )
+        query_vector: list[float] = json.loads(embed_resp["body"].read())["embedding"]
 
-        Requires: embed query with Bedrock embedding model, then
-        run a k-NN search with a metadata filter on the `lens` field.
-        Full implementation omitted for brevity — see scripts/ingest_docs.py
-        for the indexing logic which mirrors this retrieval contract.
-        """
-        raise NotImplementedError("OpenSearch retrieval not yet implemented")
+        # Build lens filter: always include general; add specific lens if not general
+        lens_values = ["general"]
+        if lens != Lens.GENERAL:
+            lens_values.append(lens.value)
+
+        os_query = {
+            "size": _TOP_K,
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "knn": {
+                                "embedding": {
+                                    "vector": query_vector,
+                                    "k": _TOP_K,
+                                }
+                            }
+                        }
+                    ],
+                    "filter": [{"terms": {"lens": lens_values}}],
+                }
+            },
+        }
+
+        credentials = boto3.Session().get_credentials().get_frozen_credentials()
+        auth = AWS4Auth(
+            credentials.access_key,
+            credentials.secret_key,
+            _REGION,
+            "aoss",
+            session_token=credentials.token,
+        )
+        os_client = OpenSearch(
+            hosts=[{"host": _OPENSEARCH_ENDPOINT.replace("https://", ""), "port": 443}],  # type: ignore[union-attr]
+            http_auth=auth,
+            use_ssl=True,
+            verify_certs=True,
+            connection_class=RequestsHttpConnection,
+            timeout=10,
+        )
+        response = os_client.search(index=_VECTOR_INDEX, body=os_query)
+        return [
+            {
+                "text": hit["_source"]["text"],
+                "score": hit["_score"],
+                "source": hit["_source"].get("source", ""),
+                "metadata": {
+                    "lens": hit["_source"].get("lens", ""),
+                    "pillar": hit["_source"].get("pillar", ""),
+                },
+            }
+            for hit in response["hits"]["hits"]
+        ]
 
     # ------------------------------------------------------------------
     # Generation
     # ------------------------------------------------------------------
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=16))
-    async def _generate(
-        self, request: ArchitectureRequest, chunks: list[dict]
-    ) -> str:
+    async def _generate(self, request: ArchitectureRequest, chunks: list[dict]) -> str:
         """Call Amazon Bedrock (Claude) with structured prompt + retrieved context."""
         context_block = "\n\n".join(
-            f"[{i+1}] (source: {c.get('source','')}, lens: {c.get('metadata',{}).get('lens','')}, "
+            f"[{i+1}] (source: {c.get('source','')}, "
+            f"lens: {c.get('metadata',{}).get('lens','')}, "
             f"pillar: {c.get('metadata',{}).get('pillar','')})\n{c['text']}"
             for i, c in enumerate(chunks)
         ) or "[No context retrieved — operating in demo mode]"
 
         schema = ArchitectureResponse.model_json_schema()
-
         system_prompt = _SYSTEM_PROMPT.format(
             schema=json.dumps(schema, indent=2),
             lens_instructions=_LENS_INSTRUCTIONS[request.lens],
         )
-
         user_message = (
             f"Workload description: {request.workload_description}\n\n"
             f"Non-functional requirements: {request.non_functionals.model_dump_json()}\n\n"
             f"Lens: {request.lens.value}\n\n"
             f"Retrieved context:\n{context_block}"
         )
-
         body = json.dumps(
             {
                 "anthropic_version": "bedrock-2023-05-31",
@@ -194,7 +247,6 @@ class RagPipeline:
                 "messages": [{"role": "user", "content": user_message}],
             }
         )
-
         response = self._bedrock_runtime.invoke_model(
             modelId=_MODEL_ID,
             contentType="application/json",
