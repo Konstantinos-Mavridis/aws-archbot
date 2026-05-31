@@ -7,7 +7,12 @@ on:
       - 'backend/**'
       - 'frontend/**'
       - 'infra/**'
-
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'infra/**'
   workflow_dispatch:
     inputs:
       environment:
@@ -111,7 +116,7 @@ jobs:
     name: CDK deploy → ${{ github.event.inputs.environment || 'dev' }}
     runs-on: ubuntu-latest
     needs: build-frontend
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment: ${{ github.event.inputs.environment || 'dev' }}
     permissions:
       id-token: write

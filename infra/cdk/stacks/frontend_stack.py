@@ -3,6 +3,10 @@
 The Next.js app is built with `output: export` (static HTML/JS/CSS).
 Artifacts are uploaded to S3 and served globally via CloudFront.
 
+The `api_url` parameter is accepted for documentation and future use
+(e.g. injecting a runtime config.json). For the MVP the API URL is baked
+into the Next.js static export at CI build time via NEXT_PUBLIC_API_URL.
+
 Alternative: Replace S3+CloudFront with AWS Amplify Hosting for CI/CD-managed
 frontend deployments directly from the GitHub repo.
 """
@@ -24,7 +28,7 @@ class ArchBotFrontendStack(cdk.Stack):
         self,
         scope: Construct,
         construct_id: str,
-        api_url: str,
+        api_url: str,  # noqa: ARG002  # baked into the static export at CI build time
         **kwargs: object,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)  # type: ignore[arg-type]
@@ -43,7 +47,7 @@ class ArchBotFrontendStack(cdk.Stack):
         )
 
         # ----------------------------------------------------------------
-        # CloudFront Origin Access Control (OAC) — modern alternative to OAI
+        # CloudFront Origin Access Control (OAC)
         # ----------------------------------------------------------------
         oac = cloudfront.S3OriginAccessControl(
             self,
@@ -84,8 +88,9 @@ class ArchBotFrontendStack(cdk.Stack):
         )
 
         # ----------------------------------------------------------------
-        # Deploy Next.js static export to S3 and invalidate CloudFront
-        # (assumes `npm run build` has already produced ./frontend/out/)
+        # Deploy Next.js static export to S3 + invalidate CloudFront cache
+        # Assumes `npm run build` has already produced frontend/out/
+        # (handled by the build-frontend job in cdk-deploy.yml)
         # ----------------------------------------------------------------
         s3deploy.BucketDeployment(
             self,
@@ -98,7 +103,7 @@ class ArchBotFrontendStack(cdk.Stack):
         )
 
         # ----------------------------------------------------------------
-        # Outputs
+        # CloudFormation Outputs
         # ----------------------------------------------------------------
         cdk.CfnOutput(
             self,
