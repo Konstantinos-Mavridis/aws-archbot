@@ -4,17 +4,124 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+/* ------------------------------------------------------------------ */
+/* Design tokens                                                         */
+/* ------------------------------------------------------------------ */
 :root {
-  --color-brand: #01696f;
+  /* Brand / primary (Hydra Teal) */
+  --color-brand:            #01696f;
+  --color-brand-hover:      #0c4e54;
+  --color-brand-active:     #0f3638;
+  --color-brand-highlight:  #cedcd8;
+
+  /* Surfaces (warm neutral) */
+  --color-bg:               #f7f6f2;
+  --color-surface:          #f9f8f5;
+  --color-surface-2:        #fbfbf9;
+  --color-surface-offset:   #f3f0ec;
+  --color-border:           #d4d1ca;
+  --color-divider:          #dcd9d5;
+
+  /* Text */
+  --color-text:             #28251d;
+  --color-text-muted:       #7a7974;
+  --color-text-faint:       #bab9b4;
+
+  /* Semantic */
+  --color-error:            #a12c7b;
+  --color-error-bg:         #f5e8f1;
+  --color-success:          #437a22;
+  --color-success-bg:       #edf5e8;
+  --color-warning:          #964219;
+  --color-warning-bg:       #faf0ea;
+
+  /* Risk level badges */
+  --color-risk-high:        #a12c7b;
+  --color-risk-high-bg:     #f5e8f1;
+  --color-risk-medium:      #964219;
+  --color-risk-medium-bg:   #fdf0e8;
+  --color-risk-low:         #437a22;
+  --color-risk-low-bg:      #edf5e8;
+  --color-risk-good:        #01696f;
+  --color-risk-good-bg:     #e4f2f2;
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* Transitions */
+  --transition: 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Mermaid diagram overrides */
+/* Dark mode overrides */
+.dark {
+  --color-bg:               #171614;
+  --color-surface:          #1c1b19;
+  --color-surface-2:        #201f1d;
+  --color-surface-offset:   #1d1c1a;
+  --color-border:           #393836;
+  --color-divider:          #262523;
+
+  --color-text:             #cdccca;
+  --color-text-muted:       #797876;
+  --color-text-faint:       #5a5957;
+
+  --color-brand:            #4f98a3;
+  --color-brand-hover:      #227f8b;
+  --color-brand-highlight:  #313b3b;
+
+  --color-error:            #d163a7;
+  --color-error-bg:         #2a1a24;
+  --color-success:          #6daa45;
+  --color-success-bg:       #1a2a14;
+  --color-warning:          #bb653b;
+  --color-warning-bg:       #2a1a10;
+
+  --color-risk-high:        #d163a7;
+  --color-risk-high-bg:     #2a1a24;
+  --color-risk-medium:      #bb653b;
+  --color-risk-medium-bg:   #2a1a10;
+  --color-risk-low:         #6daa45;
+  --color-risk-low-bg:      #1a2a14;
+  --color-risk-good:        #4f98a3;
+  --color-risk-good-bg:     #0f2426;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base reset                                                            */
+/* ------------------------------------------------------------------ */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  min-height: 100dvh;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------ */
+/* Mermaid diagram                                                       */
+/* ------------------------------------------------------------------ */
 .mermaid svg {
   max-width: 100%;
   height: auto;
 }
 
-/* Smooth tab transitions */
+/* ------------------------------------------------------------------ */
+/* Tab content fade-in                                                   */
+/* ------------------------------------------------------------------ */
 .tab-content {
   animation: fadeIn 150ms ease-in;
 }
@@ -24,10 +131,57 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Accordion chevron */
+/* ------------------------------------------------------------------ */
+/* Accordion / details reset                                             */
+/* ------------------------------------------------------------------ */
 details > summary {
   list-style: none;
+  cursor: pointer;
 }
 details > summary::-webkit-details-marker {
   display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Focus rings                                                           */
+/* ------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+/* ------------------------------------------------------------------ */
+/* Scrollbar (webkit)                                                    */
+/* ------------------------------------------------------------------ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-surface-offset);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-divider);
+  border-radius: var(--radius-xl);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-faint);
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                        */
+/* ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Utility: monospace for code blocks                                   */
+/* ------------------------------------------------------------------ */
+pre, code, .font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, 'Fira Code', monospace;
 }
