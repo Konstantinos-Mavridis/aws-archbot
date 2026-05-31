@@ -6,7 +6,14 @@ Stacks:
   - ArchBotBackendStack   FastAPI on Lambda + API Gateway (or Fargate + ALB)
   - ArchBotFrontendStack  S3 static website + CloudFront distribution
 
-Deploy all: cdk deploy --all
+Deploy all:   cdk deploy --all
+Deploy one:   cdk deploy ArchBotRagStack
+
+Cross-stack references:
+  RagStack.knowledge_base_id  --> BackendStack env var KNOWLEDGE_BASE_ID
+  RagStack.data_source_id     --> BackendStack env var KB_DATA_SOURCE_ID
+  RagStack.docs_bucket        --> BackendStack IAM read grant
+  BackendStack.api_url        --> FrontendStack CloudFront origin / env var
 """
 
 import aws_cdk as cdk
@@ -28,6 +35,8 @@ backend_stack = ArchBotBackendStack(
     app,
     "ArchBotBackendStack",
     docs_bucket=rag_stack.docs_bucket,
+    knowledge_base_id=rag_stack.knowledge_base_id,
+    data_source_id=rag_stack.data_source_id,
     env=env,
 )
 backend_stack.add_dependency(rag_stack)
