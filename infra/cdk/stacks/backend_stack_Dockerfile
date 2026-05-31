@@ -1,0 +1,2 @@
+# See backend/Dockerfile — the CDK stack references ../../backend/Dockerfile
+# This placeholder documents the expected Dockerfile location.
