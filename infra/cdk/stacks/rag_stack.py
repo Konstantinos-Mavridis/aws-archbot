@@ -5,6 +5,11 @@ Option A (default): Amazon Bedrock Knowledge Bases managed RAG.
   - Bedrock Knowledge Base references the S3 bucket as its data source.
   - No vector index management required — fully managed by AWS.
 
+Cross-stack wiring:
+  self.knowledge_base_id  — str, CDK token, passed to ArchBotBackendStack
+  self.data_source_id     — str, CDK token, passed to ArchBotBackendStack
+  self.docs_bucket        — s3.Bucket, passed to ArchBotBackendStack for read grants
+
 See docs/adr/0002-rag-store-choice.md for the RAG store decision.
 """
 
@@ -20,6 +25,11 @@ from constructs import Construct
 
 
 class ArchBotRagStack(cdk.Stack):
+    # Public properties consumed by ArchBotBackendStack
+    knowledge_base_id: str
+    data_source_id: str
+    docs_bucket: s3.Bucket
+
     def __init__(self, scope: Construct, construct_id: str, **kwargs: object) -> None:
         super().__init__(scope, construct_id, **kwargs)  # type: ignore[arg-type]
 
@@ -58,7 +68,7 @@ class ArchBotRagStack(cdk.Stack):
         # Embedding model: Amazon Titan Text Embeddings v2
         # Storage: managed Bedrock vector store (OpenSearch Serverless, auto-provisioned)
         # ----------------------------------------------------------------
-        self.knowledge_base = bedrock.CfnKnowledgeBase(
+        kb = bedrock.CfnKnowledgeBase(
             self,
             "ArchBotKnowledgeBase",
             name="archbot-wa-knowledge-base",
@@ -77,17 +87,19 @@ class ArchBotRagStack(cdk.Stack):
                 type="OPENSEARCH_SERVERLESS",
                 # Bedrock creates and manages the AOSS collection automatically
                 # when storage type is OPENSEARCH_SERVERLESS and no explicit collection
-                # ARN is provided. A custom collection ARN can be supplied here
-                # to use an existing OpenSearch Serverless collection (Option B).
+                # ARN is provided. Supply a collectionArn here to use an existing
+                # collection (Option B migration path — see ADR-0002).
             ),
         )
+        # Expose as typed property for cross-stack reference
+        self.knowledge_base_id: str = kb.ref
 
         # S3 data source for the Knowledge Base
-        bedrock.CfnDataSource(
+        ds = bedrock.CfnDataSource(
             self,
             "ArchBotDocsDataSource",
             name="archbot-wa-docs",
-            knowledge_base_id=self.knowledge_base.ref,
+            knowledge_base_id=kb.ref,
             data_source_configuration=bedrock.CfnDataSource.DataSourceConfigurationProperty(
                 type="S3",
                 s3_configuration=bedrock.CfnDataSource.S3DataSourceConfigurationProperty(
@@ -105,9 +117,12 @@ class ArchBotRagStack(cdk.Stack):
                 )
             ),
         )
+        # Expose data source ID for ingest script env var and cross-stack wiring
+        self.data_source_id: str = ds.ref
 
         # ----------------------------------------------------------------
-        # Outputs
+        # CloudFormation Outputs
         # ----------------------------------------------------------------
         cdk.CfnOutput(self, "DocsBucketName", value=self.docs_bucket.bucket_name)
-        cdk.CfnOutput(self, "KnowledgeBaseId", value=self.knowledge_base.ref)
+        cdk.CfnOutput(self, "KnowledgeBaseId", value=kb.ref)
+        cdk.CfnOutput(self, "DataSourceId", value=ds.ref)

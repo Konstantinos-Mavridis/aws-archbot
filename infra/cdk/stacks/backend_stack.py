@@ -2,7 +2,7 @@
 
 For higher-throughput or VPC-required deployments, swap the Lambda construct
 for an ECS Fargate service + ALB. The `main.py` handler supports both
-execution models without code changes (Mangum wraps ASGI → Lambda event).
+execution models without code changes (Mangum wraps ASGI -> Lambda event).
 
 See docs/adr/0001-architecture-overview.md and 0003-deployment-strategy.md.
 """
@@ -26,6 +26,8 @@ class ArchBotBackendStack(cdk.Stack):
         scope: Construct,
         construct_id: str,
         docs_bucket: s3.IBucket,
+        knowledge_base_id: str,
+        data_source_id: str,
         **kwargs: object,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)  # type: ignore[arg-type]
@@ -44,7 +46,7 @@ class ArchBotBackendStack(cdk.Stack):
             ],
         )
 
-        # Bedrock: allow invoking Claude + embedding models + Knowledge Base retrieval
+        # Bedrock: invoke Claude generation model + Titan embedding model
         lambda_role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -57,10 +59,18 @@ class ArchBotBackendStack(cdk.Stack):
                 ],
             )
         )
+
+        # Bedrock: Knowledge Base retrieve (scoped to specific KB)
         lambda_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock:Retrieve"],
-                resources=["*"],  # scope to KB ARN after first deploy
+                resources=[
+                    cdk.Stack.of(self).format_arn(
+                        service="bedrock",
+                        resource="knowledge-base",
+                        resource_name=knowledge_base_id,
+                    )
+                ],
             )
         )
 
@@ -82,8 +92,9 @@ class ArchBotBackendStack(cdk.Stack):
             environment={
                 "AWS_REGION": self.region,
                 "BEDROCK_MODEL_ID": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-                # KNOWLEDGE_BASE_ID is injected after rag_stack outputs are available
-                # (use SSM Parameter Store or CDK cross-stack reference for runtime config)
+                # Cross-stack references: resolved at deploy time from RagStack outputs
+                "KNOWLEDGE_BASE_ID": knowledge_base_id,
+                "KB_DATA_SOURCE_ID": data_source_id,
             },
             log_retention=logs.RetentionDays.ONE_WEEK,
         )
@@ -114,7 +125,7 @@ class ArchBotBackendStack(cdk.Stack):
         self.api_url = api.url
 
         # ----------------------------------------------------------------
-        # Outputs
+        # CloudFormation Outputs
         # ----------------------------------------------------------------
         cdk.CfnOutput(self, "ApiUrl", value=api.url, description="ArchBot API Gateway URL")
         cdk.CfnOutput(self, "LambdaFunctionName", value=self.fn.function_name)
