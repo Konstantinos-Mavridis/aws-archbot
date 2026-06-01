@@ -29,6 +29,9 @@ jobs:
           python-version: '3.12'
           cache: pip
 
+      - name: Upgrade pip
+        run: pip install --upgrade pip
+
       - name: Install dependencies
         run: pip install -e '.[dev]'
 
@@ -102,6 +105,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+
+      - name: Upgrade pip
+        run: pip install --upgrade pip
 
       - name: Install CDK dependencies
         run: pip install -r requirements.txt
