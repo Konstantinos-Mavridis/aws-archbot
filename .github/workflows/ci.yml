@@ -20,7 +20,7 @@ jobs:
         working-directory: backend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -41,7 +41,7 @@ jobs:
         run: pytest --cov=app --cov-report=xml --cov-report=term-missing -q
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: backend-coverage
           path: backend/coverage.xml
@@ -49,8 +49,6 @@ jobs:
   frontend-lint:
     name: Frontend — lint & type-check
     runs-on: ubuntu-latest
-    # Write permission needed to push the regenerated lock file back.
-    # Scope is intentionally narrow: only this job can write.
     permissions:
       contents: write
     defaults:
@@ -58,24 +56,23 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
 
       - name: Cache npm dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-archbot-frontend
           restore-keys: |
             npm-${{ runner.os }}-archbot-frontend
 
-      # Detect stub: a real lock file has thousands of lines; a stub has <50.
       - name: Check lock file validity
         id: check-lock
         run: |
@@ -86,9 +83,6 @@ jobs:
             echo "valid=true" >> $GITHUB_OUTPUT
           fi
 
-      # One-time self-heal: regenerate and push back with [skip ci] so this
-      # step never triggers a second run.  Runs only on push (not PRs) because
-      # forks don't have write access.
       - name: Regenerate package-lock.json
         if: steps.check-lock.outputs.valid == 'false' && github.event_name == 'push'
         run: |
@@ -121,7 +115,7 @@ jobs:
         working-directory: infra/cdk
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
