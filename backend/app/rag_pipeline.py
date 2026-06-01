@@ -6,9 +6,10 @@ Retrieval options (selected automatically via environment variables):
   Option C — Chroma + sentence-transformers     (CHROMA_PATH set, local/dev mode)
   Demo     — empty context                      (none of the above)
 
-Generation options:
-  AWS     — Amazon Bedrock (Claude)             (OLLAMA_BASE_URL not set)
-  Local   — Ollama HTTP API                     (OLLAMA_BASE_URL set)
+Generation options (LLM_PROVIDER env var):
+  bedrock     — Amazon Bedrock (Claude)   default when LLM_PROVIDER unset
+  openrouter  — OpenRouter HTTP API       free tier available; needs OPENROUTER_API_KEY
+  ollama      — Ollama HTTP API           needs OLLAMA_BASE_URL
 
 See docs/adr/0002-rag-store-choice.md for the decision rationale.
 """
@@ -20,10 +21,6 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
 
-import boto3
-from mypy_boto3_bedrock_agent_runtime.type_defs import RetrievalFilterTypeDef
-from opensearchpy import OpenSearch, RequestsHttpConnection
-from requests_aws4auth import AWS4Auth
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.models import (
@@ -37,27 +34,53 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# AWS-mode settings
+# ---------------------------------------------------------------------------
+# Provider selection
+# ---------------------------------------------------------------------------
+_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "bedrock").lower()
+# Valid values: "bedrock" | "openrouter" | "ollama"
+
+# ---------------------------------------------------------------------------
+# AWS / Bedrock settings (only used when LLM_PROVIDER=bedrock)
+# ---------------------------------------------------------------------------
 _REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 _MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID",
     "anthropic.claude-3-5-sonnet-20241022-v2:0",
 )
-_KB_ID = os.environ.get("KNOWLEDGE_BASE_ID")              # Option A
-_OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT")  # Option B
+_KB_ID = os.environ.get("KNOWLEDGE_BASE_ID")               # Option A
+_OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT")   # Option B
 _VECTOR_INDEX = os.environ.get("VECTOR_INDEX_NAME", "archbot-wa-index")
 _EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 _VECTOR_DIM = 1024
 _TOP_K = int(os.environ.get("RAG_TOP_K", "20"))
 
-# Local-mode settings (Option C)
-_CHROMA_PATH = os.environ.get("CHROMA_PATH")              # Option C
+# ---------------------------------------------------------------------------
+# Local Chroma settings (Option C — all providers)
+# ---------------------------------------------------------------------------
+_CHROMA_PATH = os.environ.get("CHROMA_PATH")               # Option C
 _CHROMA_COLLECTION = "archbot-wa"
-_LOCAL_EMBED_MODEL = "all-MiniLM-L6-v2"                   # ~90 MB, runs on CPU
+_LOCAL_EMBED_MODEL = "all-MiniLM-L6-v2"                    # ~90 MB, runs on CPU
 
-# Ollama generation settings
-_OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL")       # e.g. http://ollama:11434
+# ---------------------------------------------------------------------------
+# Ollama settings (LLM_PROVIDER=ollama)
+# ---------------------------------------------------------------------------
+_OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL")        # e.g. http://ollama:11434
 _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
+
+# ---------------------------------------------------------------------------
+# OpenRouter settings (LLM_PROVIDER=openrouter)
+# ---------------------------------------------------------------------------
+_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+_OPENROUTER_BASE_URL = os.environ.get(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+)
+_OPENROUTER_MODEL = os.environ.get(
+    "OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"
+)
+# Site info forwarded to OpenRouter (recommended by their docs)
+_OPENROUTER_SITE_URL = os.environ.get("OPENROUTER_SITE_URL", "https://github.com/Konstantinos-Mavridis/aws-archbot")
+_OPENROUTER_SITE_NAME = os.environ.get("OPENROUTER_SITE_NAME", "ArchBot")
 
 # Lens-specific system prompt addenda
 _LENS_INSTRUCTIONS: dict[Lens, str] = {
@@ -98,15 +121,24 @@ class RagPipeline:
     Instantiated once at application startup (singleton via FastAPI lifespan).
     Lazy-loads heavy local deps (chromadb, sentence-transformers) only when
     CHROMA_PATH is set, so the production Lambda image stays lean.
+    boto3 clients are only created when LLM_PROVIDER=bedrock, so the Lambda
+    does not attempt to contact AWS when running in OpenRouter mode.
     """
 
     def __init__(self) -> None:
         self._bedrock_agent: Any = None
         self._bedrock_runtime: Any = None
 
-        if not (_CHROMA_PATH and _OLLAMA_BASE_URL):
+        if _LLM_PROVIDER == "bedrock":
+            import boto3
             self._bedrock_agent = boto3.client("bedrock-agent-runtime", region_name=_REGION)
             self._bedrock_runtime = boto3.client("bedrock-runtime", region_name=_REGION)
+        elif _LLM_PROVIDER == "openrouter" and not _OPENROUTER_API_KEY:
+            logger.warning(
+                "LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set — "
+                "generation requests will fail. Set OPENROUTER_API_KEY in your "
+                "environment or GitHub Secrets."
+            )
 
         self._local_embed_model: Any = None
         if _CHROMA_PATH:
@@ -179,7 +211,7 @@ class RagPipeline:
             retrievalConfiguration={
                 "vectorSearchConfiguration": {
                     "numberOfResults": _TOP_K,
-                    "filter": cast(RetrievalFilterTypeDef, filter_expr),
+                    "filter": cast(Any, filter_expr),
                 }
             },
         )
@@ -196,6 +228,10 @@ class RagPipeline:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     def _retrieve_from_opensearch(self, query: str, lens: Lens) -> list[dict[str, Any]]:
         """Option B: OpenSearch Serverless k-NN query."""
+        import boto3
+        from opensearchpy import OpenSearch, RequestsHttpConnection
+        from requests_aws4auth import AWS4Auth
+
         embed_resp = self._bedrock_runtime.invoke_model(
             modelId=_EMBEDDING_MODEL,
             contentType="application/json",
@@ -304,15 +340,18 @@ class RagPipeline:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=16))
     async def _generate(self, request: ArchitectureRequest, chunks: list[dict[str, Any]]) -> str:
-        """Dispatch to Ollama (local) or Bedrock (AWS)."""
-        if _OLLAMA_BASE_URL:
+        """Dispatch to the configured LLM provider."""
+        if _LLM_PROVIDER == "openrouter":
+            return await self._generate_openrouter(request, chunks)
+        if _LLM_PROVIDER == "ollama":
             return await self._generate_ollama(request, chunks)
+        # Default: bedrock
         return self._generate_bedrock(request, chunks)
 
     def _build_prompt_parts(
         self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
     ) -> tuple[str, str]:
-        """Return (system_prompt, user_message) shared by both generation paths."""
+        """Return (system_prompt, user_message) shared by all generation paths."""
         context_block = "\n\n".join(
             f"[{i+1}] (source: {c.get('source','')}, "
             f"lens: {c.get('metadata',{}).get('lens','')}, "
@@ -351,11 +390,48 @@ class RagPipeline:
         result: dict[str, Any] = json.loads(response["body"].read())
         return str(result["content"][0]["text"])
 
+    async def _generate_openrouter(
+        self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
+    ) -> str:
+        """Call OpenRouter API (OpenAI-compatible) — free tier path.
+
+        Free model default: meta-llama/llama-3.1-8b-instruct:free
+        Override via OPENROUTER_MODEL env var.
+        See https://openrouter.ai/docs for available free models.
+        """
+        import httpx2 as httpx
+
+        system_prompt, user_message = self._build_prompt_parts(request, chunks)
+        payload: dict[str, Any] = {
+            "model": _OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "max_tokens": 4096,
+            "temperature": 0.2,
+        }
+        headers = {
+            "Authorization": f"Bearer {_OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": _OPENROUTER_SITE_URL,
+            "X-Title": _OPENROUTER_SITE_NAME,
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{_OPENROUTER_BASE_URL}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        return str(content)
+
     async def _generate_ollama(
         self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
     ) -> str:
         """Call Ollama local API — dev / local mode path."""
-        # httpx2 is the maintained successor to httpx; API is fully compatible.
         import httpx2 as httpx
 
         system_prompt, user_message = self._build_prompt_parts(request, chunks)

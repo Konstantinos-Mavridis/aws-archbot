@@ -14,7 +14,6 @@ dependencies = [
     "fastapi>=0.111.0",
     # Pinned to exactly 0.19.0 which replaced asyncio.get_event_loop() with
     # asyncio.new_event_loop(), fixing the DeprecationWarning on Python 3.12+.
-    # Use == rather than >= so pip ignores any cached older version.
     "mangum==0.19.0",
     "uvicorn[standard]>=0.29.0",
     "pydantic>=2.7.0",
@@ -22,20 +21,19 @@ dependencies = [
     "opensearch-py>=2.6.0",
     "requests-aws4auth>=1.3.0",
     "tenacity>=8.3.0",
+    # httpx2 is required for OpenRouter and Ollama generation paths.
+    # Promoted from optional to core so all deployment targets have it.
+    "httpx2>=0.28.0",
 ]
 
 [project.optional-dependencies]
 local = [
     "chromadb>=0.5.0",
     "sentence-transformers>=3.0.0",
-    # httpx2 is the successor to httpx; starlette TestClient requires it to
-    # avoid the StarletteDeprecationWarning on `from starlette.testclient import ...`
-    "httpx2>=0.28.0",
 ]
 dev = [
     "pytest>=8.2.0",
     "pytest-asyncio>=0.23.0",
-    # httpx2 replaces httpx for starlette/FastAPI TestClient compatibility
     "httpx2>=0.28.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
@@ -47,8 +45,6 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = [
-    # Treat any DeprecationWarning from mangum as an error so regressions are
-    # caught immediately rather than surfacing as noise in CI output.
     "error::DeprecationWarning:mangum",
 ]
 

@@ -5,6 +5,18 @@ for an ECS Fargate service + ALB. The `main.py` handler supports both
 execution models without code changes (Mangum wraps ASGI -> Lambda event).
 
 See docs/adr/0001-architecture-overview.md and 0003-deployment-strategy.md.
+
+LLM provider selection
+----------------------
+Pass CDK context to choose the generation backend at deploy time:
+
+  cdk deploy -c llm_provider=openrouter -c openrouter_api_key=sk-or-v1-...
+  cdk deploy -c llm_provider=bedrock          # default
+
+When llm_provider=openrouter the Bedrock IAM grants are omitted and the
+OpenRouter API key is injected as a Lambda environment variable.
+The key is passed via CDK context (not hardcoded) so it never appears in
+synthesised CloudFormation templates committed to source control.
 """
 
 from __future__ import annotations
@@ -33,6 +45,19 @@ class ArchBotBackendStack(cdk.Stack):
         super().__init__(scope, construct_id, **kwargs)  # type: ignore[arg-type]
 
         # ----------------------------------------------------------------
+        # LLM provider config (from CDK context)
+        # ----------------------------------------------------------------
+        # Deploy with:  cdk deploy -c llm_provider=openrouter \
+        #                          -c openrouter_api_key=sk-or-v1-...
+        # Defaults to "bedrock" when context key is absent.
+        llm_provider: str = str(self.node.try_get_context("llm_provider") or "bedrock").lower()
+        openrouter_api_key: str = str(self.node.try_get_context("openrouter_api_key") or "")
+        openrouter_model: str = str(
+            self.node.try_get_context("openrouter_model")
+            or "meta-llama/llama-3.1-8b-instruct:free"
+        )
+
+        # ----------------------------------------------------------------
         # Lambda execution role
         # ----------------------------------------------------------------
         lambda_role = iam.Role(
@@ -46,33 +71,33 @@ class ArchBotBackendStack(cdk.Stack):
             ],
         )
 
-        # Bedrock: invoke Claude generation model + Titan embedding model
-        lambda_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "bedrock:InvokeModel",
-                    "bedrock:InvokeModelWithResponseStream",
-                ],
-                resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v2:0",
-                ],
+        # Bedrock IAM grants are only needed when using the Bedrock provider.
+        # Skipping them in OpenRouter mode keeps the Lambda role least-privilege.
+        if llm_provider == "bedrock":
+            lambda_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "bedrock:InvokeModel",
+                        "bedrock:InvokeModelWithResponseStream",
+                    ],
+                    resources=[
+                        f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
+                        f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v2:0",
+                    ],
+                )
             )
-        )
-
-        # Bedrock: Knowledge Base retrieve (scoped to specific KB)
-        lambda_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["bedrock:Retrieve"],
-                resources=[
-                    cdk.Stack.of(self).format_arn(
-                        service="bedrock",
-                        resource="knowledge-base",
-                        resource_name=knowledge_base_id,
-                    )
-                ],
+            lambda_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["bedrock:Retrieve"],
+                    resources=[
+                        cdk.Stack.of(self).format_arn(
+                            service="bedrock",
+                            resource="knowledge-base",
+                            resource_name=knowledge_base_id,
+                        )
+                    ],
+                )
             )
-        )
 
         docs_bucket.grant_read(lambda_role)
 
@@ -87,11 +112,32 @@ class ArchBotBackendStack(cdk.Stack):
         )
 
         # ----------------------------------------------------------------
+        # Lambda environment variables
+        # ----------------------------------------------------------------
+        # Note: AWS_REGION is reserved by the Lambda runtime — do NOT set it.
+        lambda_env: dict[str, str] = {
+            "LLM_PROVIDER": llm_provider,
+            # Cross-stack references resolved at deploy time from RagStack outputs
+            "KNOWLEDGE_BASE_ID": knowledge_base_id,
+            "KB_DATA_SOURCE_ID": data_source_id,
+        }
+
+        if llm_provider == "bedrock":
+            lambda_env["BEDROCK_MODEL_ID"] = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+
+        if llm_provider == "openrouter":
+            if not openrouter_api_key:
+                raise ValueError(
+                    "CDK context key 'openrouter_api_key' is required when "
+                    "llm_provider=openrouter. Pass it with: "
+                    "-c openrouter_api_key=sk-or-v1-..."
+                )
+            lambda_env["OPENROUTER_API_KEY"] = openrouter_api_key
+            lambda_env["OPENROUTER_MODEL"] = openrouter_model
+
+        # ----------------------------------------------------------------
         # Lambda function (Docker image for full Python dependency support)
         # ----------------------------------------------------------------
-        # Note: AWS_REGION is reserved by the Lambda runtime and injected
-        # automatically — do NOT set it manually. Use AWS_DEFAULT_REGION
-        # only if you need a fallback for boto3 in non-Lambda contexts.
         self.fn = lambda_.DockerImageFunction(
             self,
             "ArchBotFunction",
@@ -103,12 +149,7 @@ class ArchBotBackendStack(cdk.Stack):
             timeout=cdk.Duration.seconds(60),
             role=lambda_role,
             log_group=log_group,
-            environment={
-                "BEDROCK_MODEL_ID": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-                # Cross-stack references: resolved at deploy time from RagStack outputs
-                "KNOWLEDGE_BASE_ID": knowledge_base_id,
-                "KB_DATA_SOURCE_ID": data_source_id,
-            },
+            environment=lambda_env,
         )
 
         # ----------------------------------------------------------------
@@ -141,3 +182,4 @@ class ArchBotBackendStack(cdk.Stack):
         # ----------------------------------------------------------------
         cdk.CfnOutput(self, "ApiUrl", value=api.url, description="ArchBot API Gateway URL")
         cdk.CfnOutput(self, "LambdaFunctionName", value=self.fn.function_name)
+        cdk.CfnOutput(self, "LlmProvider", value=llm_provider, description="Active LLM provider")

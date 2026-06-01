@@ -1,18 +1,29 @@
-# ArchBot — fully local stack (no AWS account required)
+# ArchBot — fully local stack
 #
-# DEFAULT: includes ollama as a container.
-# For host Ollama, use the override:
-#   docker compose -f docker-compose.local.yml -f docker-compose.local.override.yml up backend frontend
+# Profiles:
+#   default (no --profile)  — OpenRouter backend + frontend (no local GPU needed)
+#   ollama                  — adds Ollama container for fully offline use
 #
-# Usage (with containerised Ollama):
-#   1. docker compose -f docker-compose.local.yml up
+# Usage — OpenRouter (recommended, free tier):
+#   1. cp backend/.env.example backend/.env
+#      # Fill in OPENROUTER_API_KEY in backend/.env
+#   2. docker compose -f docker-compose.local.yml up backend frontend
+#   3. Open http://localhost:3000
+#
+# Usage — fully offline with Ollama:
+#   1. docker compose -f docker-compose.local.yml --profile ollama up
 #   2. Ingest docs once:
 #        docker compose -f docker-compose.local.yml run --rm backend \
 #          python scripts/ingest_docs.py --lens general --store chroma
 #   3. Open http://localhost:3000
+#
+# For host Ollama (already running on your machine), use the override:
+#   docker compose -f docker-compose.local.yml -f docker-compose.local.override.yml \
+#     --profile ollama up backend frontend
 
 services:
   ollama:
+    profiles: [ollama]
     image: ollama/ollama:latest
     ports:
       - "11434:11434"
@@ -36,7 +47,12 @@ services:
       dockerfile: Dockerfile.local
     ports:
       - "8000:8000"
+    env_file:
+      # Load LLM_PROVIDER, OPENROUTER_API_KEY, etc. from backend/.env
+      # Copy backend/.env.example -> backend/.env and fill in your values.
+      - ./backend/.env
     environment:
+      # Ollama URL is only active when LLM_PROVIDER=ollama
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
       CHROMA_PATH: /data/chroma_db

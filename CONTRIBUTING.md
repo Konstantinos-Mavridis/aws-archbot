@@ -77,6 +77,63 @@ CDK_DEFAULT_ACCOUNT=000000000000 CDK_DEFAULT_REGION=us-east-1 cdk synth
 
 ---
 
+## LLM Provider
+
+ArchBot supports three generation backends, selected via the `LLM_PROVIDER` env var:
+
+| `LLM_PROVIDER` | Description | Requirements |
+|---|---|---|
+| `bedrock` | Amazon Bedrock (Claude) — **default** | AWS account + Bedrock access |
+| `openrouter` | [OpenRouter](https://openrouter.ai/) HTTP API — **free tier available** | `OPENROUTER_API_KEY` |
+| `ollama` | Local Ollama server — fully offline | Ollama running locally |
+
+### Using OpenRouter locally
+
+1. Get a free API key at <https://openrouter.ai/>
+2. Copy the example env file and fill in your key:
+   ```bash
+   cp backend/.env.example backend/.env
+   # Edit backend/.env: set OPENROUTER_API_KEY=sk-or-v1-...
+   ```
+3. Start the stack:
+   ```bash
+   docker compose -f docker-compose.local.yml up backend frontend
+   # or without Docker:
+   LLM_PROVIDER=openrouter OPENROUTER_API_KEY=sk-or-v1-... uvicorn app.main:app --reload
+   ```
+
+### Using OpenRouter in CI / GitHub Actions
+
+CI tests are fully mocked — **no API key is needed for `backend-lint-test`**.
+
+For deployment (`cdk-deploy.yml`) the key is passed as a CDK context value,
+which is sourced from a GitHub Secret:
+
+1. Add `OPENROUTER_API_KEY` to your repository secrets
+   (Settings → Secrets and variables → Actions → New repository secret).
+2. Pass it to CDK at deploy time in `.github/workflows/cdk-deploy.yml`:
+   ```yaml
+   - name: CDK deploy
+     run: |
+       cdk deploy --all --require-approval=never \
+         -c llm_provider=openrouter \
+         -c openrouter_api_key=${{ secrets.OPENROUTER_API_KEY }}
+   ```
+   The key is injected as a Lambda environment variable at deploy time and
+   never appears in synthesised CloudFormation templates.
+
+### Changing the OpenRouter model
+
+Set `OPENROUTER_MODEL` to any model slug from <https://openrouter.ai/models>.
+Free models are marked `:free`. The default is `meta-llama/llama-3.1-8b-instruct:free`.
+
+```bash
+# Higher quality free model
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free uvicorn app.main:app --reload
+```
+
+---
+
 ## Ingesting WA Documents
 
 Before running with a live RAG store, download the Well-Architected docs and run the ingest script:
@@ -171,12 +228,17 @@ To deploy manually to your own account:
 # Build frontend first
 cd frontend && npm ci && npm run build && cd ..
 
-# Deploy all stacks
+# Deploy with Bedrock (default)
 cd infra/cdk
 cdk deploy --all --require-approval=never
+
+# Deploy with OpenRouter
+cdk deploy --all --require-approval=never \
+  -c llm_provider=openrouter \
+  -c openrouter_api_key=sk-or-v1-...
 ```
 
-CDK outputs the API URL and CloudFront distribution domain after deployment.
+CDK outputs the API URL, CloudFront distribution domain, and active LLM provider after deployment.
 
 ---
 
