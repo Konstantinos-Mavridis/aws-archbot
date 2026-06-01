@@ -13,6 +13,9 @@ frontend deployments directly from the GitHub repo.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import aws_cdk as cdk
 from aws_cdk import (
     aws_cloudfront as cloudfront,
@@ -21,6 +24,9 @@ from aws_cdk import (
     aws_s3_deployment as s3deploy,
 )
 from constructs import Construct
+
+# Resolved at synth time relative to this file's location.
+_FRONTEND_OUT = Path(__file__).parent.parent.parent.parent / "frontend" / "out"
 
 
 class ArchBotFrontendStack(cdk.Stack):
@@ -88,19 +94,34 @@ class ArchBotFrontendStack(cdk.Stack):
         )
 
         # ----------------------------------------------------------------
-        # Deploy Next.js static export to S3 + invalidate CloudFront cache
-        # Assumes `npm run build` has already produced frontend/out/
-        # (handled by the build-frontend job in cdk-deploy.yml)
+        # Deploy Next.js static export to S3 + invalidate CloudFront cache.
+        #
+        # CDK validates asset paths eagerly at synth time, so we guard with
+        # an existence check.  In the `cdk-synth` CI job no build step runs
+        # beforehand; the asset is intentionally absent.  The full deploy
+        # pipeline (cdk-deploy.yml) builds the frontend first, so `out/` is
+        # present when `cdk deploy` actually runs.
+        #
+        # The SKIP_FRONTEND_ASSET env-var lets the synth job opt out
+        # explicitly without relying on filesystem state.
         # ----------------------------------------------------------------
-        s3deploy.BucketDeployment(
-            self,
-            "DeployWebsite",
-            sources=[s3deploy.Source.asset("../../frontend/out")],
-            destination_bucket=website_bucket,
-            distribution=self.distribution,
-            distribution_paths=["/*"],
-            memory_limit=512,
-        )
+        _skip = os.environ.get("SKIP_FRONTEND_ASSET", "").lower() in ("1", "true", "yes")
+        if not _skip and _FRONTEND_OUT.is_dir():
+            s3deploy.BucketDeployment(
+                self,
+                "DeployWebsite",
+                sources=[s3deploy.Source.asset(str(_FRONTEND_OUT))],
+                destination_bucket=website_bucket,
+                distribution=self.distribution,
+                distribution_paths=["/*"],
+                memory_limit=512,
+            )
+        else:
+            # Emit a synth-time warning so the absence is visible in CI logs.
+            cdk.Annotations.of(self).add_warning(
+                "DeployWebsite skipped: frontend/out not found. "
+                "Run `npm run build` in frontend/ before `cdk deploy`."
+            )
 
         # ----------------------------------------------------------------
         # CloudFormation Outputs
