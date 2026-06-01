@@ -36,8 +36,9 @@ class ArchitectureRequest(BaseModel):
         max_length=2000,
         description="Free-text description of the workload",
     )
-    # Use lambda so mypy sees a Callable[[], NonFunctionals] not a bare type.
-    non_functionals: NonFunctionals = Field(default_factory=lambda: NonFunctionals())
+    # default_factory=NonFunctionals is valid at runtime (Pydantic calls it with
+    # no args), but mypy's stub expects Callable[[], T] not type[T]. Suppress.
+    non_functionals: NonFunctionals = Field(default_factory=NonFunctionals)  # type: ignore[arg-type]
     lens: Lens = Field(Lens.GENERAL)
 
 

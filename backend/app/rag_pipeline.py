@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import boto3
+from mypy_boto3_bedrock_agent_runtime.type_defs import RetrievalFilterTypeDef
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -167,7 +168,6 @@ class RagPipeline:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     def _retrieve_from_knowledge_base(self, query: str, lens: Lens) -> list[dict[str, Any]]:
         """Option A: Bedrock Knowledge Base Retrieve API."""
-        # Build a plain dict; the boto3 stub accepts Any for the filter value.
         filter_expr: dict[str, Any] = {"equals": {"key": "lens", "value": lens.value}}
         if lens != Lens.GENERAL:
             filter_expr = {
@@ -177,14 +177,16 @@ class RagPipeline:
                 ]
             }
         # _KB_ID is guaranteed non-None here (caller checks before dispatching)
-        kb_id: str = _KB_ID  # type: ignore[assignment]
+        kb_id = _KB_ID or ""
         response = self._bedrock_agent.retrieve(
             knowledgeBaseId=kb_id,
             retrievalQuery={"text": query},
             retrievalConfiguration={
                 "vectorSearchConfiguration": {
                     "numberOfResults": _TOP_K,
-                    "filter": filter_expr,
+                    # cast: boto3 TypedDict is overly restrictive; our dict is
+                    # structurally compatible with RetrievalFilterTypeDef at runtime.
+                    "filter": cast(RetrievalFilterTypeDef, filter_expr),
                 }
             },
         )
@@ -233,7 +235,7 @@ class RagPipeline:
             session_token=credentials.token,
         )
         # _OPENSEARCH_ENDPOINT is guaranteed non-None here (caller checks)
-        endpoint: str = _OPENSEARCH_ENDPOINT  # type: ignore[assignment]
+        endpoint = _OPENSEARCH_ENDPOINT or ""
         os_client = OpenSearch(
             hosts=[{"host": endpoint.replace("https://", ""), "port": 443}],
             http_auth=auth,
@@ -259,14 +261,9 @@ class RagPipeline:
     def _retrieve_from_chroma(
         self, query: str, lens: Lens
     ) -> list[dict[str, Any]]:
-        """Option C: Chroma persistent vector DB with local sentence-transformer embeddings.
-
-        Used in local/dev mode when CHROMA_PATH is set and no AWS credentials
-        are available. Zero AWS dependency.
-        """
+        """Option C: Chroma persistent vector DB with local sentence-transformer embeddings."""
         import chromadb  # type: ignore[import-untyped]
 
-        # _local_embed_model is confirmed non-None by the caller
         query_vector: list[float] = self._local_embed_model.encode(query).tolist()
         client = chromadb.PersistentClient(path=_CHROMA_PATH)
         collection = client.get_or_create_collection(
@@ -277,7 +274,6 @@ class RagPipeline:
         if lens != Lens.GENERAL:
             lens_values.append(lens.value)
 
-        # Chroma $in filter
         where_filter: dict[str, Any] = (
             {"lens": {"$in": lens_values}}
             if len(lens_values) > 1
@@ -291,7 +287,6 @@ class RagPipeline:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception:  # noqa: BLE001
-            # Collection empty (not yet ingested) — fall through to demo mode
             logger.warning("Chroma collection empty — run ingest_docs.py first")
             return []
 
@@ -301,7 +296,7 @@ class RagPipeline:
         return [
             {
                 "text": doc,
-                "score": round(1.0 - dist, 4),  # cosine distance -> similarity
+                "score": round(1.0 - dist, 4),
                 "source": meta.get("source", ""),
                 "metadata": {
                     "lens": meta.get("lens", ""),
@@ -367,16 +362,10 @@ class RagPipeline:
     async def _generate_ollama(
         self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
     ) -> str:
-        """Call Ollama local API — dev / local mode path.
-
-        Uses the /api/generate endpoint (non-streaming) with the same
-        structured prompt as the Bedrock path.  Model quality is lower
-        than Claude but sufficient for end-to-end local demos.
-        """
+        """Call Ollama local API — dev / local mode path."""
         import httpx  # type: ignore[import-untyped]
 
         system_prompt, user_message = self._build_prompt_parts(request, chunks)
-        # Ollama /api/generate: combine system + user into a single prompt
         full_prompt = (
             f"{system_prompt}\n\nUser: {user_message}\n\n"
             "Assistant (output valid JSON only, no markdown fences):"
