@@ -103,15 +103,14 @@ class RagPipeline:
     """
 
     def __init__(self) -> None:
-        # AWS clients — only constructed when not in pure local mode.
-        # Typed as Any to avoid mypy wrestling with the boto3 client union type;
-        # all call sites are guarded by the same _CHROMA_PATH/_OLLAMA_BASE_URL check.
+        # Declare attributes first so mypy sees a single definition per name.
+        # Assigned to None here; populated below when not in pure local mode.
+        self._bedrock_agent: Any = None
+        self._bedrock_runtime: Any = None
+
         if not (_CHROMA_PATH and _OLLAMA_BASE_URL):
-            self._bedrock_agent: Any = boto3.client("bedrock-agent-runtime", region_name=_REGION)
-            self._bedrock_runtime: Any = boto3.client("bedrock-runtime", region_name=_REGION)
-        else:
-            self._bedrock_agent: Any = None
-            self._bedrock_runtime: Any = None
+            self._bedrock_agent = boto3.client("bedrock-agent-runtime", region_name=_REGION)
+            self._bedrock_runtime = boto3.client("bedrock-runtime", region_name=_REGION)
 
         # Local embedding model — loaded once, reused across requests
         self._local_embed_model: Any = None
