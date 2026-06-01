@@ -38,8 +38,8 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -121,7 +121,7 @@ def _upload_to_s3_for_kb(chunks: list[dict], lens: str, s3_client: object) -> No
 
 def _start_kb_ingestion(bedrock_agent_client: object) -> str:
     if not _KB_ID or not _KB_DS_ID:
-        raise EnvironmentError("KNOWLEDGE_BASE_ID and KB_DATA_SOURCE_ID must be set")
+        raise OSError("KNOWLEDGE_BASE_ID and KB_DATA_SOURCE_ID must be set")
     resp = bedrock_agent_client.start_ingestion_job(  # type: ignore[attr-defined]
         knowledgeBaseId=_KB_ID, dataSourceId=_KB_DS_ID,
     )
@@ -164,7 +164,7 @@ def _get_opensearch_client() -> object:
     from opensearchpy import OpenSearch, RequestsHttpConnection
     from requests_aws4auth import AWS4Auth
     if not _OPENSEARCH_ENDPOINT:
-        raise EnvironmentError("OPENSEARCH_ENDPOINT must be set")
+        raise OSError("OPENSEARCH_ENDPOINT must be set")
     creds = boto3.Session().get_credentials().get_frozen_credentials()
     auth = AWS4Auth(creds.access_key, creds.secret_key, _REGION, "aoss", session_token=creds.token)
     return OpenSearch(

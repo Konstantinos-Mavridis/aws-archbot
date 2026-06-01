@@ -6,13 +6,13 @@ so that Claude outputs exactly the shape we expect.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class Lens(str, Enum):
+class Lens(StrEnum):
     GENERAL = "general"
     FSI = "fsi"
     HEALTHCARE = "healthcare"

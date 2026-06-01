@@ -296,7 +296,7 @@ class RagPipeline:
                     "pillar": meta.get("pillar", ""),
                 },
             }
-            for doc, meta, dist in zip(docs, metas, distances)
+            for doc, meta, dist in zip(docs, metas, distances, strict=True)
         ]
 
     # ------------------------------------------------------------------
