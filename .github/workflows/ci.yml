@@ -108,9 +108,17 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://placeholder.example.com
 
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-out-ci
+          path: frontend/out/
+          retention-days: 1
+
   cdk-synth:
     name: CDK — synthesise
     runs-on: ubuntu-latest
+    needs: frontend-lint
     defaults:
       run:
         working-directory: infra/cdk
@@ -129,6 +137,12 @@ jobs:
 
       - name: Install CDK CLI
         run: npm install -g aws-cdk
+
+      - name: Download frontend build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-out-ci
+          path: frontend/out
 
       - name: CDK synth (no AWS credentials needed)
         run: cdk synth --app 'python app.py' 2>&1
