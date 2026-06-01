@@ -38,8 +38,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # AWS-mode settings
-# AWS_REGION is injected automatically by the Lambda runtime; read it here
-# as a fallback for non-Lambda contexts (local dev, ECS, etc.).
 _REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 _MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID",
@@ -103,8 +101,6 @@ class RagPipeline:
     """
 
     def __init__(self) -> None:
-        # Declare attributes first so mypy sees a single definition per name.
-        # Assigned to None here; populated below when not in pure local mode.
         self._bedrock_agent: Any = None
         self._bedrock_runtime: Any = None
 
@@ -112,7 +108,6 @@ class RagPipeline:
             self._bedrock_agent = boto3.client("bedrock-agent-runtime", region_name=_REGION)
             self._bedrock_runtime = boto3.client("bedrock-runtime", region_name=_REGION)
 
-        # Local embedding model — loaded once, reused across requests
         self._local_embed_model: Any = None
         if _CHROMA_PATH:
             self._init_local_embed()
@@ -177,7 +172,6 @@ class RagPipeline:
                     {"equals": {"key": "lens", "value": lens.value}},
                 ]
             }
-        # _KB_ID is guaranteed non-None here (caller checks before dispatching)
         kb_id = _KB_ID or ""
         response = self._bedrock_agent.retrieve(
             knowledgeBaseId=kb_id,
@@ -185,8 +179,6 @@ class RagPipeline:
             retrievalConfiguration={
                 "vectorSearchConfiguration": {
                     "numberOfResults": _TOP_K,
-                    # cast: boto3 TypedDict is overly restrictive; our dict is
-                    # structurally compatible with RetrievalFilterTypeDef at runtime.
                     "filter": cast(RetrievalFilterTypeDef, filter_expr),
                 }
             },
@@ -235,7 +227,6 @@ class RagPipeline:
             "aoss",
             session_token=credentials.token,
         )
-        # _OPENSEARCH_ENDPOINT is guaranteed non-None here (caller checks)
         endpoint = _OPENSEARCH_ENDPOINT or ""
         os_client = OpenSearch(
             hosts=[{"host": endpoint.replace("https://", ""), "port": 443}],
@@ -364,7 +355,8 @@ class RagPipeline:
         self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
     ) -> str:
         """Call Ollama local API — dev / local mode path."""
-        import httpx
+        # httpx2 is the maintained successor to httpx; API is fully compatible.
+        import httpx2 as httpx
 
         system_prompt, user_message = self._build_prompt_parts(request, chunks)
         full_prompt = (

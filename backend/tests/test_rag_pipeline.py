@@ -47,7 +47,9 @@ async def test_retrieve_returns_empty_without_store() -> None:
 @pytest.mark.asyncio()
 async def test_generate_ollama_calls_http(local_pipeline: RagPipeline) -> None:
     """_generate_ollama sends the correct payload to the Ollama API."""
-    import httpx
+    # httpx2 is aliased as httpx inside rag_pipeline._generate_ollama;
+    # patch the AsyncClient.post on the httpx2 module directly.
+    import httpx2 as httpx
 
     sample_json = json.dumps(
         {
@@ -70,7 +72,7 @@ async def test_generate_ollama_calls_http(local_pipeline: RagPipeline) -> None:
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"response": sample_json}
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
+    with patch("httpx2.AsyncClient.post", return_value=mock_response):
         request = ArchitectureRequest(workload_description="Microservices on EKS")
         result = await local_pipeline._generate_ollama(request, [])
 
