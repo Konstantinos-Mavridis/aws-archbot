@@ -29,6 +29,12 @@ on:
         default: openrouter
         type: choice
         options: [bedrock, openrouter]
+      deploy_rag:
+        description: "Deploy RAG stack (OpenSearch Serverless ~$700/mo — leave false for free tier)"
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 concurrency:
   group: cdk-deploy-${{ github.ref }}
@@ -169,11 +175,12 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           LLM_PROVIDER="${{ github.event.inputs.llm_provider || 'openrouter' }}"
-          CDK_CONTEXT="-c llm_provider=${LLM_PROVIDER}"
+          DEPLOY_RAG="${{ github.event.inputs.deploy_rag || 'false' }}"
+          CDK_CONTEXT="-c llm_provider=${LLM_PROVIDER} -c deploy_rag=${DEPLOY_RAG}"
           if [ "$LLM_PROVIDER" = "openrouter" ]; then
             CDK_CONTEXT="${CDK_CONTEXT} -c openrouter_api_key=${OPENROUTER_API_KEY}"
           fi
-          OUTPUT=$(cdk diff ArchBotRagStack ArchBotBackendStack ArchBotFrontendStack $CDK_CONTEXT 2>&1) || true
+          OUTPUT=$(cdk diff ArchBotBackendStack ArchBotFrontendStack $CDK_CONTEXT 2>&1) || true
           echo "$OUTPUT"
           echo 'diff<<EOF' >> $GITHUB_OUTPUT
           echo "$OUTPUT" >> $GITHUB_OUTPUT
@@ -228,9 +235,10 @@ jobs:
         id: synth
         working-directory: infra/cdk
         run: |
-          OUTPUT=$(cdk synth ArchBotRagStack ArchBotBackendStack ArchBotFrontendStack \
+          OUTPUT=$(cdk synth ArchBotBackendStack ArchBotFrontendStack \
             -c llm_provider=openrouter \
             -c openrouter_api_key=placeholder-dry-run \
+            -c deploy_rag=false \
             2>&1) || true
           echo "$OUTPUT"
           echo 'synth<<EOF' >> $GITHUB_OUTPUT
@@ -309,11 +317,16 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           LLM_PROVIDER="${{ github.event.inputs.llm_provider || 'openrouter' }}"
-          CDK_CONTEXT="-c llm_provider=${LLM_PROVIDER}"
+          DEPLOY_RAG="${{ github.event.inputs.deploy_rag || 'false' }}"
+          CDK_CONTEXT="-c llm_provider=${LLM_PROVIDER} -c deploy_rag=${DEPLOY_RAG}"
           if [ "$LLM_PROVIDER" = "openrouter" ]; then
             CDK_CONTEXT="${CDK_CONTEXT} -c openrouter_api_key=${OPENROUTER_API_KEY}"
           fi
-          cdk deploy ArchBotRagStack ArchBotBackendStack ArchBotFrontendStack \
+          STACKS="ArchBotBackendStack ArchBotFrontendStack"
+          if [ "$DEPLOY_RAG" = "true" ]; then
+            STACKS="ArchBotRagStack $STACKS"
+          fi
+          cdk deploy $STACKS \
             --require-approval=never \
             --outputs-file cdk-outputs.json \
             $CDK_CONTEXT
