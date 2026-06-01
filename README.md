@@ -128,6 +128,10 @@ python scripts/ingest_docs.py --lens healthcare
 ### Deploy with CDK
 
 ```bash
+# 1. Build the frontend static export first — CDK FrontendStack bundles it
+cd frontend && npm ci && npm run build && cd ..
+
+# 2. Bootstrap (once per account/region), then deploy
 cd infra/cdk
 pip install -r requirements.txt
 cdk bootstrap          # once per account/region
@@ -135,6 +139,10 @@ cdk synth
 cdk diff
 cdk deploy --all
 ```
+
+> **Note:** Running `cdk synth` or `cdk deploy` without a `frontend/out/` directory will
+> produce a `DeployWebsite skipped` warning from the FrontendStack. Always run
+> `npm run build` in `frontend/` first.
 
 ---
 

@@ -59,11 +59,21 @@ echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' > .env.local
 
 ### Infrastructure (CDK)
 
+The `FrontendStack` bundles `frontend/out/` into the S3 deployment. You must
+build the frontend before synthesising or deploying:
+
 ```bash
+# Build the frontend static export first
+cd frontend && npm ci && npm run build && cd ..
+
+# Then synthesise (no AWS credentials needed for synth)
 cd infra/cdk
 pip install -r requirements.txt
 CDK_DEFAULT_ACCOUNT=000000000000 CDK_DEFAULT_REGION=us-east-1 cdk synth
 ```
+
+> Skipping the frontend build will produce a `DeployWebsite skipped` warning
+> from the CDK `FrontendStack` construct and the S3 deployment will be a no-op.
 
 ---
 
@@ -115,11 +125,15 @@ VECTOR_INDEX_NAME=archbot-wa-index
 
 ### CI checks (must pass)
 
-| Job | What it checks |
-|---|---|
-| `backend-lint-test` | ruff, mypy, pytest with coverage |
-| `frontend-lint` | eslint, tsc --noEmit, next build |
-| `cdk-synth` | CDK synthesises without errors |
+| Job | What it checks | Depends on |
+|---|---|---|
+| `backend-lint-test` | ruff, mypy, pytest with coverage | — |
+| `frontend-lint` | eslint, tsc --noEmit, next build; uploads `frontend/out` artifact | — |
+| `cdk-synth` | CDK synthesises without errors or warnings | `frontend-lint` (needs the built artifact) |
+
+> `cdk-synth` runs **after** `frontend-lint` so that `frontend/out` exists on
+> the runner. Without it the `FrontendStack` emits a `DeployWebsite skipped`
+> warning and the S3 deployment asset is missing.
 
 ---
 
@@ -148,8 +162,16 @@ See existing ADRs in `docs/adr/` for examples.
 
 Deployment is handled by `.github/workflows/cdk-deploy.yml` on merge to `main`.
 
+The `cdk-deploy.yml` workflow builds the frontend in a dedicated `build-frontend`
+job and passes the resulting `frontend/out` artifact to the `cdk-deploy` job,
+so manual pre-build steps are not required in CI.
+
 To deploy manually to your own account:
 ```bash
+# Build frontend first
+cd frontend && npm ci && npm run build && cd ..
+
+# Deploy all stacks
 cd infra/cdk
 cdk deploy --all --require-approval=never
 ```

@@ -2,6 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-05-31  
+**Updated:** 2026-06-01  
 **Authors:** Konstantinos Mavridis  
 
 ---
@@ -30,15 +31,36 @@ ArchBot needs a deployment strategy that:
 
 ### CI/CD Pipeline (GitHub Actions)
 
-```
-PR opened
-  └─ ci.yml: lint (ruff, eslint) + unit tests (pytest, jest) + CDK synth
+#### `ci.yml` — runs on every push and PR
 
-Merge to main
-  └─ cdk-deploy.yml: CDK diff → CDK deploy --require-approval=never → dev
+```
+backend-lint-test  ─────────────────────────────────────────► (pass/fail)
+
+frontend-lint      ── eslint + tsc + next build ──────────────► upload frontend/out artifact
+                                                                        │
+cdk-synth          ── needs: frontend-lint ──────────────────────────── ┘
+                      downloads frontend/out → cdk synth → (pass/fail)
+```
+
+> `cdk-synth` depends on `frontend-lint` so that `frontend/out` is present
+> when the `FrontendStack` construct runs. Without the built static export,
+> CDK emits a `DeployWebsite skipped` warning and the S3 asset is missing.
+
+#### `cdk-deploy.yml` — runs on merge to `main`
+
+```
+build-frontend  ── npm ci + next build ──► upload frontend/out artifact
+                                                    │
+cdk-diff (PR)   ── needs: build-frontend ───────────┘ cdk diff → post PR comment
+
+cdk-deploy      ── needs: build-frontend ───────────┘ cdk deploy --require-approval=never → dev
 ```
 
 **CDK diff** runs on every PR, publishing the changeset as a PR comment — reviewers see infra changes alongside code changes.
+
+> When `AWS_DEPLOY_ROLE_ARN` is not configured (e.g. forks or contributor PRs),
+> the pipeline falls back to a `cdk-diff-dry-run` job that runs `cdk synth`
+> without AWS credentials and posts the output as a PR comment instead.
 
 ---
 
