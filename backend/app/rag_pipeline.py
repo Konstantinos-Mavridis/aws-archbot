@@ -120,7 +120,7 @@ class RagPipeline:
     def _init_local_embed(self) -> None:
         """Lazily load sentence-transformers (only in local mode)."""
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+            from sentence_transformers import SentenceTransformer
             self._local_embed_model = SentenceTransformer(_LOCAL_EMBED_MODEL)
             logger.info("Loaded local embedding model: %s", _LOCAL_EMBED_MODEL)
         except ImportError:
@@ -263,7 +263,7 @@ class RagPipeline:
         self, query: str, lens: Lens
     ) -> list[dict[str, Any]]:
         """Option C: Chroma persistent vector DB with local sentence-transformer embeddings."""
-        import chromadb  # type: ignore[import-untyped]
+        import chromadb
 
         query_vector: list[float] = self._local_embed_model.encode(query).tolist()
         client = chromadb.PersistentClient(path=_CHROMA_PATH)
