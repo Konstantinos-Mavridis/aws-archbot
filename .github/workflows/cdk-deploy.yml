@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   # -----------------------------------------------------------------------
-  # Preflight: detect whether AWS credentials are configured.
+  # Preflight: detect whether required secrets are configured.
   # -----------------------------------------------------------------------
   preflight:
     name: Preflight checks
@@ -44,18 +44,39 @@ jobs:
     outputs:
       has-credentials: ${{ steps.check.outputs.has-credentials }}
     steps:
-      - name: Check for AWS deploy secret
+      - name: Check required secrets
         id: check
         env:
           ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LLM_PROVIDER: ${{ github.event.inputs.llm_provider || 'openrouter' }}
         run: |
+          READY=true
+
           if [ -n "$ROLE_ARN" ]; then
-            echo "✅ AWS_DEPLOY_ROLE_ARN is set — deploy jobs will run."
-            echo "has-credentials=true" >> $GITHUB_OUTPUT
+            echo "✅ AWS_DEPLOY_ROLE_ARN is set."
           else
             echo "⚠️  AWS_DEPLOY_ROLE_ARN is NOT set — deploy jobs will be skipped."
-            echo "   To enable deployments, add the secret at:"
-            echo "   Settings → Secrets and variables → Actions → New repository secret"
+            echo "   Add it at: Settings → Secrets and variables → Actions → New repository secret"
+            READY=false
+          fi
+
+          if [ "$LLM_PROVIDER" = "openrouter" ]; then
+            if [ -n "$OPENROUTER_API_KEY" ]; then
+              echo "✅ OPENROUTER_API_KEY is set."
+            else
+              echo "⚠️  OPENROUTER_API_KEY is NOT set — required when llm_provider=openrouter."
+              echo "   Add it at: Settings → Secrets and variables → Actions → New repository secret"
+              READY=false
+            fi
+          else
+            echo "ℹ️  llm_provider=bedrock — OPENROUTER_API_KEY not required."
+          fi
+
+          if [ "$READY" = "true" ]; then
+            echo "✅ All required secrets present — deploy jobs will run."
+            echo "has-credentials=true" >> $GITHUB_OUTPUT
+          else
             echo "has-credentials=false" >> $GITHUB_OUTPUT
           fi
 
