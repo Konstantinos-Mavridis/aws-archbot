@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Default: read-only. frontend-lint overrides to write so it can push the
+# regenerated package-lock.json back to the branch (one-time self-heal).
+permissions:
+  contents: read
+
 jobs:
   backend-lint-test:
     name: Backend — lint & test
@@ -44,12 +49,18 @@ jobs:
   frontend-lint:
     name: Frontend — lint & type-check
     runs-on: ubuntu-latest
+    # Write permission needed to push the regenerated lock file back.
+    # Scope is intentionally narrow: only this job can write.
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: frontend
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -60,15 +71,34 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.npm
-          # key excludes lock hash so cache still hits even with stub lock
           key: npm-${{ runner.os }}-archbot-frontend
           restore-keys: |
             npm-${{ runner.os }}-archbot-frontend
 
-      # npm install resolves and writes a full lock file on every run.
-      # TODO: switch back to `npm ci` once the full package-lock.json is
-      # committed from a local machine (run `npm install` in frontend/ locally,
-      # then `git add frontend/package-lock.json && git commit`).
+      # Detect stub: a real lock file has thousands of lines; a stub has <50.
+      - name: Check lock file validity
+        id: check-lock
+        run: |
+          lines=$(wc -l < package-lock.json 2>/dev/null || echo 0)
+          if [ "$lines" -lt 50 ]; then
+            echo "valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      # One-time self-heal: regenerate and push back with [skip ci] so this
+      # step never triggers a second run.  Runs only on push (not PRs) because
+      # forks don't have write access.
+      - name: Regenerate package-lock.json
+        if: steps.check-lock.outputs.valid == 'false' && github.event_name == 'push'
+        run: |
+          npm install --package-lock-only
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(frontend): regenerate package-lock.json [skip ci]"
+          git push
+
       - name: Install dependencies
         run: npm install
 
