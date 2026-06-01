@@ -30,9 +30,6 @@ on:
         type: choice
         options: [bedrock, openrouter]
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 concurrency:
   group: cdk-deploy-${{ github.ref }}
   cancel-in-progress: false
