@@ -50,9 +50,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Need write access to push the regenerated lock file back
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -63,37 +60,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          # key excludes lock hash so cache still hits even with stub lock
+          key: npm-${{ runner.os }}-archbot-frontend
           restore-keys: |
-            npm-${{ runner.os }}-
+            npm-${{ runner.os }}-archbot-frontend
 
-      # Detect whether package-lock.json is a valid resolved lock file.
-      # A stub/placeholder has fewer than 50 lines; a real lock has thousands.
-      - name: Check lock file validity
-        id: check-lock
-        run: |
-          lines=$(wc -l < package-lock.json 2>/dev/null || echo 0)
-          echo "lines=$lines" >> $GITHUB_OUTPUT
-          if [ "$lines" -lt 50 ]; then
-            echo "valid=false" >> $GITHUB_OUTPUT
-          else
-            echo "valid=true" >> $GITHUB_OUTPUT
-          fi
-
-      # If lock is a stub, regenerate it and commit it back to the branch.
-      # This is a one-time self-healing step; after the commit npm ci works.
-      - name: Regenerate package-lock.json (stub detected)
-        if: steps.check-lock.outputs.valid == 'false' && github.event_name == 'push'
-        run: |
-          npm install --package-lock-only
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore(frontend): regenerate package-lock.json [skip ci]"
-          git push
-
+      # npm install resolves and writes a full lock file on every run.
+      # TODO: switch back to `npm ci` once the full package-lock.json is
+      # committed from a local machine (run `npm install` in frontend/ locally,
+      # then `git add frontend/package-lock.json && git commit`).
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Lint
         run: npm run lint
