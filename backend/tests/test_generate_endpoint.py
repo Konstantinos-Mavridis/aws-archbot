@@ -35,10 +35,17 @@ def _make_mock_response() -> ArchitectureResponse:
     )
 
 
+def _mock_pipeline() -> MagicMock:
+    """Return a MagicMock that looks like a RagPipeline."""
+    mock = MagicMock()
+    mock.run = AsyncMock(return_value=_make_mock_response())
+    return mock
+
+
 def test_generate_returns_200(sample_request_payload: dict) -> None:
-    mock_pipeline = MagicMock()
-    mock_pipeline.run = AsyncMock(return_value=_make_mock_response())
-    with patch("app.main.pipeline", mock_pipeline):
+    # Patch get_pipeline — the factory called inside the endpoint — so the
+    # real RagPipeline (which needs AWS credentials) is never instantiated.
+    with patch("app.main.get_pipeline", return_value=_mock_pipeline()):
         client = TestClient(app)
         response = client.post("/generate", json=sample_request_payload)
     assert response.status_code == 200
@@ -56,9 +63,7 @@ def test_generate_missing_description() -> None:
 
 def test_generate_default_lens(sample_request_payload: dict) -> None:
     payload = {"workload_description": "Simple web application"}
-    mock_pipeline = MagicMock()
-    mock_pipeline.run = AsyncMock(return_value=_make_mock_response())
-    with patch("app.main.pipeline", mock_pipeline):
+    with patch("app.main.get_pipeline", return_value=_mock_pipeline()):
         client = TestClient(app)
         response = client.post("/generate", json=payload)
     assert response.status_code == 200
