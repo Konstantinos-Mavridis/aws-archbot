@@ -36,7 +36,8 @@ class ArchitectureRequest(BaseModel):
         max_length=2000,
         description="Free-text description of the workload",
     )
-    non_functionals: NonFunctionals = Field(default_factory=NonFunctionals)
+    # Use lambda so mypy sees a Callable[[], NonFunctionals] not a bare type.
+    non_functionals: NonFunctionals = Field(default_factory=lambda: NonFunctionals())
     lens: Lens = Field(Lens.GENERAL)
 
 

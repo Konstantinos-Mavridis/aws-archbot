@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import boto3
 from opensearchpy import OpenSearch, RequestsHttpConnection
@@ -37,7 +37,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # AWS-mode settings
-_REGION = os.environ.get("AWS_REGION", "us-east-1")
+# AWS_REGION is injected automatically by the Lambda runtime; read it here
+# as a fallback for non-Lambda contexts (local dev, ECS, etc.).
+_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 _MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID",
     "anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -109,14 +111,14 @@ class RagPipeline:
             self._bedrock_runtime = None  # type: ignore[assignment]
 
         # Local embedding model — loaded once, reused across requests
-        self._local_embed_model = None
+        self._local_embed_model: Any = None
         if _CHROMA_PATH:
             self._init_local_embed()
 
     def _init_local_embed(self) -> None:
         """Lazily load sentence-transformers (only in local mode)."""
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import]
+            from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
             self._local_embed_model = SentenceTransformer(_LOCAL_EMBED_MODEL)
             logger.info("Loaded local embedding model: %s", _LOCAL_EMBED_MODEL)
         except ImportError:
@@ -139,7 +141,7 @@ class RagPipeline:
     # Retrieval
     # ------------------------------------------------------------------
 
-    async def _retrieve(self, request: ArchitectureRequest) -> list[dict]:
+    async def _retrieve(self, request: ArchitectureRequest) -> list[dict[str, Any]]:
         """Select the appropriate retrieval backend."""
         query = self._build_query(request)
         if _KB_ID:
@@ -163,9 +165,10 @@ class RagPipeline:
         return " ".join(parts)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-    def _retrieve_from_knowledge_base(self, query: str, lens: Lens) -> list[dict]:
+    def _retrieve_from_knowledge_base(self, query: str, lens: Lens) -> list[dict[str, Any]]:
         """Option A: Bedrock Knowledge Base Retrieve API."""
-        filter_expr: dict = {"equals": {"key": "lens", "value": lens.value}}
+        # Build a plain dict; the boto3 stub accepts Any for the filter value.
+        filter_expr: dict[str, Any] = {"equals": {"key": "lens", "value": lens.value}}
         if lens != Lens.GENERAL:
             filter_expr = {
                 "orAll": [
@@ -173,8 +176,10 @@ class RagPipeline:
                     {"equals": {"key": "lens", "value": lens.value}},
                 ]
             }
+        # _KB_ID is guaranteed non-None here (caller checks before dispatching)
+        kb_id: str = _KB_ID  # type: ignore[assignment]
         response = self._bedrock_agent.retrieve(
-            knowledgeBaseId=_KB_ID,
+            knowledgeBaseId=kb_id,
             retrievalQuery={"text": query},
             retrievalConfiguration={
                 "vectorSearchConfiguration": {
@@ -194,7 +199,7 @@ class RagPipeline:
         ]
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-    def _retrieve_from_opensearch(self, query: str, lens: Lens) -> list[dict]:
+    def _retrieve_from_opensearch(self, query: str, lens: Lens) -> list[dict[str, Any]]:
         """Option B: OpenSearch Serverless k-NN query."""
         embed_resp = self._bedrock_runtime.invoke_model(
             modelId=_EMBEDDING_MODEL,
@@ -206,7 +211,7 @@ class RagPipeline:
         lens_values = ["general"]
         if lens != Lens.GENERAL:
             lens_values.append(lens.value)
-        os_query = {
+        os_query: dict[str, Any] = {
             "size": _TOP_K,
             "query": {
                 "bool": {
@@ -215,7 +220,11 @@ class RagPipeline:
                 }
             },
         }
-        credentials = boto3.Session().get_credentials().get_frozen_credentials()
+        session = boto3.Session()
+        raw_creds = session.get_credentials()
+        if raw_creds is None:
+            raise RuntimeError("No AWS credentials found for OpenSearch Serverless request")
+        credentials = raw_creds.get_frozen_credentials()
         auth = AWS4Auth(
             credentials.access_key,
             credentials.secret_key,
@@ -223,8 +232,10 @@ class RagPipeline:
             "aoss",
             session_token=credentials.token,
         )
+        # _OPENSEARCH_ENDPOINT is guaranteed non-None here (caller checks)
+        endpoint: str = _OPENSEARCH_ENDPOINT  # type: ignore[assignment]
         os_client = OpenSearch(
-            hosts=[{"host": _OPENSEARCH_ENDPOINT.replace("https://", ""), "port": 443}],  # type: ignore[union-attr]
+            hosts=[{"host": endpoint.replace("https://", ""), "port": 443}],
             http_auth=auth,
             use_ssl=True,
             verify_certs=True,
@@ -247,15 +258,16 @@ class RagPipeline:
 
     def _retrieve_from_chroma(
         self, query: str, lens: Lens
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Option C: Chroma persistent vector DB with local sentence-transformer embeddings.
 
         Used in local/dev mode when CHROMA_PATH is set and no AWS credentials
         are available. Zero AWS dependency.
         """
-        import chromadb  # type: ignore[import]
+        import chromadb  # type: ignore[import-untyped]
 
-        query_vector: list[float] = self._local_embed_model.encode(query).tolist()  # type: ignore[union-attr]
+        # _local_embed_model is confirmed non-None by the caller
+        query_vector: list[float] = self._local_embed_model.encode(query).tolist()
         client = chromadb.PersistentClient(path=_CHROMA_PATH)
         collection = client.get_or_create_collection(
             name=_CHROMA_COLLECTION,
@@ -266,7 +278,7 @@ class RagPipeline:
             lens_values.append(lens.value)
 
         # Chroma $in filter
-        where_filter: dict = (
+        where_filter: dict[str, Any] = (
             {"lens": {"$in": lens_values}}
             if len(lens_values) > 1
             else {"lens": lens_values[0]}
@@ -283,9 +295,9 @@ class RagPipeline:
             logger.warning("Chroma collection empty — run ingest_docs.py first")
             return []
 
-        docs = results["documents"][0]
-        metas = results["metadatas"][0]
-        distances = results["distances"][0]
+        docs: list[str] = results["documents"][0]
+        metas: list[dict[str, Any]] = results["metadatas"][0]
+        distances: list[float] = results["distances"][0]
         return [
             {
                 "text": doc,
@@ -304,13 +316,15 @@ class RagPipeline:
     # ------------------------------------------------------------------
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=16))
-    async def _generate(self, request: ArchitectureRequest, chunks: list[dict]) -> str:
+    async def _generate(self, request: ArchitectureRequest, chunks: list[dict[str, Any]]) -> str:
         """Dispatch to Ollama (local) or Bedrock (AWS)."""
         if _OLLAMA_BASE_URL:
             return await self._generate_ollama(request, chunks)
         return self._generate_bedrock(request, chunks)
 
-    def _build_prompt_parts(self, request: ArchitectureRequest, chunks: list[dict]) -> tuple[str, str]:
+    def _build_prompt_parts(
+        self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
+    ) -> tuple[str, str]:
         """Return (system_prompt, user_message) shared by both generation paths."""
         context_block = "\n\n".join(
             f"[{i+1}] (source: {c.get('source','')}, "
@@ -332,7 +346,7 @@ class RagPipeline:
         )
         return system_prompt, user_message
 
-    def _generate_bedrock(self, request: ArchitectureRequest, chunks: list[dict]) -> str:
+    def _generate_bedrock(self, request: ArchitectureRequest, chunks: list[dict[str, Any]]) -> str:
         """Call Amazon Bedrock (Claude) — production path."""
         system_prompt, user_message = self._build_prompt_parts(request, chunks)
         body = json.dumps({
@@ -347,17 +361,19 @@ class RagPipeline:
             accept="application/json",
             body=body,
         )
-        result = json.loads(response["body"].read())
-        return result["content"][0]["text"]
+        result: dict[str, Any] = json.loads(response["body"].read())
+        return str(result["content"][0]["text"])
 
-    async def _generate_ollama(self, request: ArchitectureRequest, chunks: list[dict]) -> str:
+    async def _generate_ollama(
+        self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
+    ) -> str:
         """Call Ollama local API — dev / local mode path.
 
         Uses the /api/generate endpoint (non-streaming) with the same
         structured prompt as the Bedrock path.  Model quality is lower
         than Claude but sufficient for end-to-end local demos.
         """
-        import httpx  # type: ignore[import]
+        import httpx  # type: ignore[import-untyped]
 
         system_prompt, user_message = self._build_prompt_parts(request, chunks)
         # Ollama /api/generate: combine system + user into a single prompt
@@ -366,7 +382,7 @@ class RagPipeline:
             "Assistant (output valid JSON only, no markdown fences):"
         )
         async with httpx.AsyncClient(timeout=180.0) as client:
-            response = await client.post(
+            resp = await client.post(
                 f"{_OLLAMA_BASE_URL}/api/generate",
                 json={
                     "model": _OLLAMA_MODEL,
@@ -375,5 +391,5 @@ class RagPipeline:
                     "options": {"temperature": 0.2, "num_predict": 4096},
                 },
             )
-            response.raise_for_status()
-        return response.json()["response"]
+            resp.raise_for_status()
+        return str(resp.json()["response"])
