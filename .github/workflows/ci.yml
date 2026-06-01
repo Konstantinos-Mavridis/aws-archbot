@@ -6,15 +6,9 @@ on:
   pull_request:
     branches: [main]
 
-# Force all actions to run on Node.js 24 now rather than waiting for the
-# June 16 2026 forced migration. Resolves deprecation warnings on
-# actions/setup-python@v5 and actions/upload-artifact@v5 which still ship
-# a Node.js 20 fallback binary that GitHub runners pick up by default.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Default: read-only. frontend-lint overrides to write so it can push the
-# regenerated package-lock.json back to the branch (one-time self-heal).
 permissions:
   contents: read
 
@@ -27,10 +21,10 @@ jobs:
         working-directory: backend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
@@ -48,7 +42,7 @@ jobs:
         run: pytest --cov=app --cov-report=xml --cov-report=term-missing -q
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: backend-coverage
           path: backend/coverage.xml
@@ -63,17 +57,17 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
 
       - name: Cache npm dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-archbot-frontend
@@ -122,10 +116,10 @@ jobs:
         working-directory: infra/cdk
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
