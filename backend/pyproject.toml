@@ -12,9 +12,10 @@ description = "ArchBot — AI-powered AWS architecture advisor (backend)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.111.0",
-    # mangum>=0.19.0 fixes the `asyncio.get_event_loop()` deprecation warning
-    # that fires on Python 3.12+ when there is no running event loop at import time.
-    "mangum>=0.19.0",
+    # Pinned to exactly 0.19.0 which replaced asyncio.get_event_loop() with
+    # asyncio.new_event_loop(), fixing the DeprecationWarning on Python 3.12+.
+    # Use == rather than >= so pip ignores any cached older version.
+    "mangum==0.19.0",
     "uvicorn[standard]>=0.29.0",
     "pydantic>=2.7.0",
     "boto3>=1.34.0",
@@ -45,6 +46,11 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    # Treat any DeprecationWarning from mangum as an error so regressions are
+    # caught immediately rather than surfacing as noise in CI output.
+    "error::DeprecationWarning:mangum",
+]
 
 [tool.ruff]
 line-length = 100
