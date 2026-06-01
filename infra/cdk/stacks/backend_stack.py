@@ -17,6 +17,12 @@ When llm_provider=openrouter the Bedrock IAM grants are omitted and the
 OpenRouter API key is injected as a Lambda environment variable.
 The key is passed via CDK context (not hardcoded) so it never appears in
 synthesised CloudFormation templates committed to source control.
+
+RAG (optional)
+--------------
+Pass docs_bucket, knowledge_base_id, and data_source_id to enable RAG.
+When omitted the Lambda still starts but KNOWLEDGE_BASE_ID will be empty
+and the backend should degrade gracefully (direct LLM, no retrieval).
 """
 
 from __future__ import annotations
@@ -37,9 +43,9 @@ class ArchBotBackendStack(cdk.Stack):
         self,
         scope: Construct,
         construct_id: str,
-        docs_bucket: s3.IBucket,
-        knowledge_base_id: str,
-        data_source_id: str,
+        docs_bucket: s3.IBucket | None = None,
+        knowledge_base_id: str | None = None,
+        data_source_id: str | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)  # type: ignore[arg-type]
@@ -47,9 +53,6 @@ class ArchBotBackendStack(cdk.Stack):
         # ----------------------------------------------------------------
         # LLM provider config (from CDK context)
         # ----------------------------------------------------------------
-        # Deploy with:  cdk deploy -c llm_provider=openrouter \
-        #                          -c openrouter_api_key=sk-or-v1-...
-        # Defaults to "bedrock" when context key is absent.
         llm_provider: str = str(self.node.try_get_context("llm_provider") or "bedrock").lower()
         openrouter_api_key: str = str(self.node.try_get_context("openrouter_api_key") or "")
         openrouter_model: str = str(
@@ -71,8 +74,7 @@ class ArchBotBackendStack(cdk.Stack):
             ],
         )
 
-        # Bedrock IAM grants are only needed when using the Bedrock provider.
-        # Skipping them in OpenRouter mode keeps the Lambda role least-privilege.
+        # Bedrock IAM grants — only when using Bedrock provider.
         if llm_provider == "bedrock":
             lambda_role.add_to_policy(
                 iam.PolicyStatement(
@@ -86,20 +88,22 @@ class ArchBotBackendStack(cdk.Stack):
                     ],
                 )
             )
-            lambda_role.add_to_policy(
-                iam.PolicyStatement(
-                    actions=["bedrock:Retrieve"],
-                    resources=[
-                        cdk.Stack.of(self).format_arn(
-                            service="bedrock",
-                            resource="knowledge-base",
-                            resource_name=knowledge_base_id,
-                        )
-                    ],
+            if knowledge_base_id:
+                lambda_role.add_to_policy(
+                    iam.PolicyStatement(
+                        actions=["bedrock:Retrieve"],
+                        resources=[
+                            cdk.Stack.of(self).format_arn(
+                                service="bedrock",
+                                resource="knowledge-base",
+                                resource_name=knowledge_base_id,
+                            )
+                        ],
+                    )
                 )
-            )
 
-        docs_bucket.grant_read(lambda_role)
+        if docs_bucket:
+            docs_bucket.grant_read(lambda_role)
 
         # ----------------------------------------------------------------
         # Explicit log group (avoids deprecated log_retention prop)
@@ -114,12 +118,10 @@ class ArchBotBackendStack(cdk.Stack):
         # ----------------------------------------------------------------
         # Lambda environment variables
         # ----------------------------------------------------------------
-        # Note: AWS_REGION is reserved by the Lambda runtime — do NOT set it.
         lambda_env: dict[str, str] = {
             "LLM_PROVIDER": llm_provider,
-            # Cross-stack references resolved at deploy time from RagStack outputs
-            "KNOWLEDGE_BASE_ID": knowledge_base_id,
-            "KB_DATA_SOURCE_ID": data_source_id,
+            "KNOWLEDGE_BASE_ID": knowledge_base_id or "",
+            "KB_DATA_SOURCE_ID": data_source_id or "",
         }
 
         if llm_provider == "bedrock":
@@ -183,3 +185,9 @@ class ArchBotBackendStack(cdk.Stack):
         cdk.CfnOutput(self, "ApiUrl", value=api.url, description="ArchBot API Gateway URL")
         cdk.CfnOutput(self, "LambdaFunctionName", value=self.fn.function_name)
         cdk.CfnOutput(self, "LlmProvider", value=llm_provider, description="Active LLM provider")
+        cdk.CfnOutput(
+            self,
+            "RagEnabled",
+            value="true" if knowledge_base_id else "false",
+            description="Whether RAG (Bedrock Knowledge Base) is wired up",
+        )
