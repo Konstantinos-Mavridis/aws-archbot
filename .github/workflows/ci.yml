@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Force all actions to run on Node.js 24 now rather than waiting for the
+# June 16 2026 forced migration. Resolves deprecation warnings on
+# actions/setup-python@v5 and actions/upload-artifact@v5 which still ship
+# a Node.js 20 fallback binary that GitHub runners pick up by default.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Default: read-only. frontend-lint overrides to write so it can push the
 # regenerated package-lock.json back to the branch (one-time self-heal).
 permissions:
