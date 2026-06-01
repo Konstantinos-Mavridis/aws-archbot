@@ -77,8 +77,21 @@ class ArchBotBackendStack(cdk.Stack):
         docs_bucket.grant_read(lambda_role)
 
         # ----------------------------------------------------------------
+        # Explicit log group (avoids deprecated log_retention prop)
+        # ----------------------------------------------------------------
+        log_group = logs.LogGroup(
+            self,
+            "ArchBotFunctionLogs",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+
+        # ----------------------------------------------------------------
         # Lambda function (Docker image for full Python dependency support)
         # ----------------------------------------------------------------
+        # Note: AWS_REGION is reserved by the Lambda runtime and injected
+        # automatically — do NOT set it manually. Use AWS_DEFAULT_REGION
+        # only if you need a fallback for boto3 in non-Lambda contexts.
         self.fn = lambda_.DockerImageFunction(
             self,
             "ArchBotFunction",
@@ -89,14 +102,13 @@ class ArchBotBackendStack(cdk.Stack):
             memory_size=1024,
             timeout=cdk.Duration.seconds(60),
             role=lambda_role,
+            log_group=log_group,
             environment={
-                "AWS_REGION": self.region,
                 "BEDROCK_MODEL_ID": "anthropic.claude-3-5-sonnet-20241022-v2:0",
                 # Cross-stack references: resolved at deploy time from RagStack outputs
                 "KNOWLEDGE_BASE_ID": knowledge_base_id,
                 "KB_DATA_SOURCE_ID": data_source_id,
             },
-            log_retention=logs.RetentionDays.ONE_WEEK,
         )
 
         # ----------------------------------------------------------------
