@@ -78,7 +78,7 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ secrets.API_URL }}
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-out
           path: frontend/out/
@@ -118,7 +118,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Download frontend artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: frontend-out
           path: frontend/out
@@ -173,7 +173,7 @@ jobs:
       - run: npm install -g aws-cdk
 
       - name: Download frontend artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: frontend-out
           path: frontend/out
@@ -249,7 +249,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Download frontend artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: frontend-out
           path: frontend/out
@@ -263,7 +263,7 @@ jobs:
         run: cdk deploy --all --require-approval=never --outputs-file cdk-outputs.json
 
       - name: Upload CDK outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cdk-outputs
           path: infra/cdk/cdk-outputs.json
