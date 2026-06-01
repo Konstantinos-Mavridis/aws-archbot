@@ -37,7 +37,6 @@ concurrency:
 jobs:
   # -----------------------------------------------------------------------
   # Preflight: detect whether AWS credentials are configured.
-  # secrets context IS available inside steps (just not in job-level `if`).
   # -----------------------------------------------------------------------
   preflight:
     name: Preflight checks
@@ -114,6 +113,7 @@ jobs:
           cache: pip
           cache-dependency-path: infra/cdk/requirements.txt
 
+      - run: pip install --upgrade pip
       - run: pip install -r infra/cdk/requirements.txt
       - run: npm install -g aws-cdk
 
@@ -140,7 +140,7 @@ jobs:
           if [ "$LLM_PROVIDER" = "openrouter" ]; then
             CDK_CONTEXT="${CDK_CONTEXT} -c openrouter_api_key=${OPENROUTER_API_KEY}"
           fi
-          OUTPUT=$(cdk diff --all $CDK_CONTEXT 2>&1) || true
+          OUTPUT=$(cdk diff ArchBotRagStack ArchBotBackendStack ArchBotFrontendStack $CDK_CONTEXT 2>&1) || true
           echo "$OUTPUT"
           echo 'diff<<EOF' >> $GITHUB_OUTPUT
           echo "$OUTPUT" >> $GITHUB_OUTPUT
@@ -160,7 +160,6 @@ jobs:
 
   # -----------------------------------------------------------------------
   # CDK synth dry-run — runs on PRs when credentials are NOT configured.
-  # Gives contributors a best-effort preview without hitting AWS.
   # -----------------------------------------------------------------------
   cdk-diff-dry-run:
     name: CDK diff (dry-run, no AWS)
@@ -182,6 +181,7 @@ jobs:
           cache: pip
           cache-dependency-path: infra/cdk/requirements.txt
 
+      - run: pip install --upgrade pip
       - run: pip install -r infra/cdk/requirements.txt
       - run: npm install -g aws-cdk
 
@@ -194,9 +194,8 @@ jobs:
       - name: CDK synth (no credentials)
         id: synth
         working-directory: infra/cdk
-        # Use a placeholder key so the CDK ValueError guard doesn't fire
         run: |
-          OUTPUT=$(cdk synth --all \
+          OUTPUT=$(cdk synth ArchBotRagStack ArchBotBackendStack ArchBotFrontendStack \
             -c llm_provider=openrouter \
             -c openrouter_api_key=placeholder-dry-run \
             2>&1) || true
@@ -232,7 +231,6 @@ jobs:
 
   # -----------------------------------------------------------------------
   # CDK deploy — runs on push to main or workflow_dispatch.
-  # Skipped (not failed) when credentials are absent.
   # -----------------------------------------------------------------------
   cdk-deploy:
     name: CDK deploy -> ${{ github.event.inputs.environment || 'dev' }}
@@ -256,6 +254,7 @@ jobs:
           cache: pip
           cache-dependency-path: infra/cdk/requirements.txt
 
+      - run: pip install --upgrade pip
       - run: pip install -r infra/cdk/requirements.txt
       - run: npm install -g aws-cdk
 
@@ -271,18 +270,6 @@ jobs:
           name: frontend-out
           path: frontend/out
 
-      - name: CDK synth
-        working-directory: infra/cdk
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: |
-          LLM_PROVIDER="${{ github.event.inputs.llm_provider || 'openrouter' }}"
-          CDK_CONTEXT="-c llm_provider=${LLM_PROVIDER}"
-          if [ "$LLM_PROVIDER" = "openrouter" ]; then
-            CDK_CONTEXT="${CDK_CONTEXT} -c openrouter_api_key=${OPENROUTER_API_KEY}"
-          fi
-          cdk synth --all $CDK_CONTEXT
-
       - name: CDK deploy
         working-directory: infra/cdk
         env:
@@ -293,7 +280,8 @@ jobs:
           if [ "$LLM_PROVIDER" = "openrouter" ]; then
             CDK_CONTEXT="${CDK_CONTEXT} -c openrouter_api_key=${OPENROUTER_API_KEY}"
           fi
-          cdk deploy --all --require-approval=never \
+          cdk deploy ArchBotRagStack ArchBotBackendStack ArchBotFrontendStack \
+            --require-approval=never \
             --outputs-file cdk-outputs.json \
             $CDK_CONTEXT
 
