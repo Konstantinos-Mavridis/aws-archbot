@@ -150,7 +150,7 @@ jobs:
           echo 'EOF' >> $GITHUB_OUTPUT
 
       - name: Post diff as PR comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const body = `## CDK Diff\n\n\`\`\`\n${{ steps.diff.outputs.diff }}\n\`\`\``
@@ -211,7 +211,7 @@ jobs:
           CDK_DEFAULT_REGION: us-east-1
 
       - name: Post synth summary as PR comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const body = [
