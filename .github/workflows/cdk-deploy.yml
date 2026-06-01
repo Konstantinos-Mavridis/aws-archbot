@@ -50,8 +50,12 @@ jobs:
           ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
         run: |
           if [ -n "$ROLE_ARN" ]; then
+            echo "✅ AWS_DEPLOY_ROLE_ARN is set — deploy jobs will run."
             echo "has-credentials=true" >> $GITHUB_OUTPUT
           else
+            echo "⚠️  AWS_DEPLOY_ROLE_ARN is NOT set — deploy jobs will be skipped."
+            echo "   To enable deployments, add the secret at:"
+            echo "   Settings → Secrets and variables → Actions → New repository secret"
             echo "has-credentials=false" >> $GITHUB_OUTPUT
           fi
 
