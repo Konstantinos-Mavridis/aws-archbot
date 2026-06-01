@@ -103,13 +103,15 @@ class RagPipeline:
     """
 
     def __init__(self) -> None:
-        # AWS clients — only constructed when not in pure local mode
+        # AWS clients — only constructed when not in pure local mode.
+        # Typed as Any to avoid mypy wrestling with the boto3 client union type;
+        # all call sites are guarded by the same _CHROMA_PATH/_OLLAMA_BASE_URL check.
         if not (_CHROMA_PATH and _OLLAMA_BASE_URL):
-            self._bedrock_agent = boto3.client("bedrock-agent-runtime", region_name=_REGION)
-            self._bedrock_runtime = boto3.client("bedrock-runtime", region_name=_REGION)
+            self._bedrock_agent: Any = boto3.client("bedrock-agent-runtime", region_name=_REGION)
+            self._bedrock_runtime: Any = boto3.client("bedrock-runtime", region_name=_REGION)
         else:
-            self._bedrock_agent = None  # type: ignore[assignment]
-            self._bedrock_runtime = None  # type: ignore[assignment]
+            self._bedrock_agent: Any = None
+            self._bedrock_runtime: Any = None
 
         # Local embedding model — loaded once, reused across requests
         self._local_embed_model: Any = None
@@ -324,7 +326,7 @@ class RagPipeline:
         context_block = "\n\n".join(
             f"[{i+1}] (source: {c.get('source','')}, "
             f"lens: {c.get('metadata',{}).get('lens','')}, "
-            f"pillar: {c.get('metadata',{}).get('pillar','')})\n{c['text']}"
+            f"pillar: {c.get('metadata',{}).get('pillar','')})\\n{c['text']}"
             for i, c in enumerate(chunks)
         ) or "[No context retrieved — operating in demo mode]"
 
@@ -363,7 +365,7 @@ class RagPipeline:
         self, request: ArchitectureRequest, chunks: list[dict[str, Any]]
     ) -> str:
         """Call Ollama local API — dev / local mode path."""
-        import httpx  # type: ignore[import-untyped]
+        import httpx
 
         system_prompt, user_message = self._build_prompt_parts(request, chunks)
         full_prompt = (
